@@ -22,7 +22,7 @@ type BriefTool struct{}
 // New creates a new BriefTool.
 func New() *BriefTool { return &BriefTool{} }
 
-func (t *BriefTool) Name() string                { return "Brief" }
+func (t *BriefTool) Name() string                { return "SendUserMessage" }
 func (t *BriefTool) Description() string          { return toolDescription }
 func (t *BriefTool) IsReadOnly() bool             { return true }
 func (t *BriefTool) InputSchema() json.RawMessage { return json.RawMessage(inputSchemaJSON) }

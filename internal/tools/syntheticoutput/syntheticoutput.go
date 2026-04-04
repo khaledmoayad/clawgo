@@ -22,7 +22,7 @@ type SyntheticOutputTool struct{}
 // New creates a new SyntheticOutputTool.
 func New() *SyntheticOutputTool { return &SyntheticOutputTool{} }
 
-func (t *SyntheticOutputTool) Name() string                { return "SyntheticOutput" }
+func (t *SyntheticOutputTool) Name() string                { return "StructuredOutput" }
 func (t *SyntheticOutputTool) Description() string          { return toolDescription }
 func (t *SyntheticOutputTool) IsReadOnly() bool             { return true }
 func (t *SyntheticOutputTool) InputSchema() json.RawMessage { return json.RawMessage(inputSchemaJSON) }
@@ -31,7 +31,7 @@ func (t *SyntheticOutputTool) InputSchema() json.RawMessage { return json.RawMes
 func (t *SyntheticOutputTool) IsConcurrencySafe(_ json.RawMessage) bool { return true }
 
 func (t *SyntheticOutputTool) CheckPermissions(_ context.Context, _ json.RawMessage, permCtx *permissions.PermissionContext) (permissions.PermissionResult, error) {
-	return permissions.CheckPermission("SyntheticOutput", true, permCtx), nil
+	return permissions.CheckPermission("StructuredOutput", true, permCtx), nil
 }
 
 func (t *SyntheticOutputTool) Call(_ context.Context, inp json.RawMessage, _ *tools.ToolUseContext) (*tools.ToolResult, error) {

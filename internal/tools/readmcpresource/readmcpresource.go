@@ -22,7 +22,7 @@ type ReadMcpResourceTool struct{}
 // New creates a new ReadMcpResourceTool.
 func New() *ReadMcpResourceTool { return &ReadMcpResourceTool{} }
 
-func (t *ReadMcpResourceTool) Name() string                { return "ReadMcpResource" }
+func (t *ReadMcpResourceTool) Name() string                { return "ReadMcpResourceTool" }
 func (t *ReadMcpResourceTool) Description() string          { return toolDescription }
 func (t *ReadMcpResourceTool) IsReadOnly() bool             { return true }
 func (t *ReadMcpResourceTool) InputSchema() json.RawMessage { return json.RawMessage(inputSchemaJSON) }
@@ -31,7 +31,7 @@ func (t *ReadMcpResourceTool) InputSchema() json.RawMessage { return json.RawMes
 func (t *ReadMcpResourceTool) IsConcurrencySafe(_ json.RawMessage) bool { return true }
 
 func (t *ReadMcpResourceTool) CheckPermissions(_ context.Context, _ json.RawMessage, permCtx *permissions.PermissionContext) (permissions.PermissionResult, error) {
-	return permissions.CheckPermission("ReadMcpResource", true, permCtx), nil
+	return permissions.CheckPermission("ReadMcpResourceTool", true, permCtx), nil
 }
 
 func (t *ReadMcpResourceTool) Call(_ context.Context, inp json.RawMessage, _ *tools.ToolUseContext) (*tools.ToolResult, error) {

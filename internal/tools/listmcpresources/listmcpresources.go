@@ -16,7 +16,7 @@ type ListMcpResourcesTool struct{}
 // New creates a new ListMcpResourcesTool.
 func New() *ListMcpResourcesTool { return &ListMcpResourcesTool{} }
 
-func (t *ListMcpResourcesTool) Name() string                { return "ListMcpResources" }
+func (t *ListMcpResourcesTool) Name() string                { return "ListMcpResourcesTool" }
 func (t *ListMcpResourcesTool) Description() string          { return toolDescription }
 func (t *ListMcpResourcesTool) IsReadOnly() bool             { return true }
 func (t *ListMcpResourcesTool) InputSchema() json.RawMessage { return json.RawMessage(inputSchemaJSON) }
@@ -25,7 +25,7 @@ func (t *ListMcpResourcesTool) InputSchema() json.RawMessage { return json.RawMe
 func (t *ListMcpResourcesTool) IsConcurrencySafe(_ json.RawMessage) bool { return true }
 
 func (t *ListMcpResourcesTool) CheckPermissions(_ context.Context, _ json.RawMessage, permCtx *permissions.PermissionContext) (permissions.PermissionResult, error) {
-	return permissions.CheckPermission("ListMcpResources", true, permCtx), nil
+	return permissions.CheckPermission("ListMcpResourcesTool", true, permCtx), nil
 }
 
 func (t *ListMcpResourcesTool) Call(_ context.Context, _ json.RawMessage, _ *tools.ToolUseContext) (*tools.ToolResult, error) {

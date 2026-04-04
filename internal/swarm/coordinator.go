@@ -327,11 +327,11 @@ func GetCoordinatorUserContext(mcpClientNames []string, scratchpadDir string) ma
 
 	// Default worker tools (full tool set minus internal coordinator-only tools)
 	workerTools := []string{
-		"Agent", "AskUser", "Bash", "Brief", "Config", "CronCreate",
+		"Agent", "AskUser", "Bash", "SendUserMessage", "Config", "CronCreate",
 		"CronDelete", "CronList", "Edit", "EnterPlanMode", "EnterWorktree",
-		"ExitPlanMode", "ExitWorktree", "Glob", "Grep", "ListMCPResources",
-		"LSP", "NotebookEdit", "PowerShell", "Read", "ReadMCPResource",
-		"Skill", "Sleep", "SyntheticOutput", "TaskCreate", "TaskGet",
+		"ExitPlanMode", "ExitWorktree", "Glob", "Grep", "ListMcpResourcesTool",
+		"LSP", "NotebookEdit", "PowerShell", "Read", "ReadMcpResourceTool",
+		"Skill", "Sleep", "StructuredOutput", "TaskCreate", "TaskGet",
 		"TaskList", "TaskOutput", "TaskStop", "TaskUpdate", "TodoWrite",
 		"ToolSearch", "WebFetch", "WebSearch", "Write",
 	}
