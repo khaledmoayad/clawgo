@@ -51,6 +51,7 @@ func isEnvTruthy(key string) bool {
 // ProviderClientConfig holds configuration for creating a provider-aware client.
 type ProviderClientConfig struct {
 	APIKey    string
+	AuthToken string // OAuth bearer token (from ANTHROPIC_AUTH_TOKEN env or secure storage)
 	BaseURL   string
 	Model     string
 	MaxTokens int64
@@ -76,14 +77,26 @@ func NewProviderClient(ctx context.Context, cfg ProviderClientConfig) (*Client, 
 		opts = append(opts, foundryOpts...)
 	default:
 		// First-party Anthropic API
-		apiKey := cfg.APIKey
-		if apiKey == "" {
-			apiKey = os.Getenv("ANTHROPIC_API_KEY")
+		// Auth priority: ANTHROPIC_API_KEY > ANTHROPIC_AUTH_TOKEN > cfg.AuthToken > cfg.APIKey
+		apiKey := os.Getenv("ANTHROPIC_API_KEY")
+		authToken := os.Getenv("ANTHROPIC_AUTH_TOKEN")
+
+		switch {
+		case apiKey != "":
+			// Direct API key from environment (highest priority)
+			opts = append(opts, option.WithAPIKey(apiKey))
+		case authToken != "":
+			// OAuth bearer token from ANTHROPIC_AUTH_TOKEN env var
+			opts = append(opts, option.WithAuthToken(authToken))
+		case cfg.AuthToken != "":
+			// OAuth bearer token from config (e.g., from secure storage)
+			opts = append(opts, option.WithAuthToken(cfg.AuthToken))
+		case cfg.APIKey != "":
+			// API key from config
+			opts = append(opts, option.WithAPIKey(cfg.APIKey))
+		default:
+			return nil, fmt.Errorf("no API key or auth token provided: set ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN environment variable")
 		}
-		if apiKey == "" {
-			return nil, fmt.Errorf("no API key provided: set ANTHROPIC_API_KEY environment variable or pass an API key")
-		}
-		opts = append(opts, option.WithAPIKey(apiKey))
 
 		baseURL := cfg.BaseURL
 		if baseURL == "" {
