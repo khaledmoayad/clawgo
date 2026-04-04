@@ -13,10 +13,13 @@ import (
 type ContentBlockType string
 
 const (
-	ContentText       ContentBlockType = "text"
-	ContentToolUse    ContentBlockType = "tool_use"
-	ContentToolResult ContentBlockType = "tool_result"
-	ContentThinking   ContentBlockType = "thinking"
+	ContentText             ContentBlockType = "text"
+	ContentToolUse          ContentBlockType = "tool_use"
+	ContentToolResult       ContentBlockType = "tool_result"
+	ContentThinking         ContentBlockType = "thinking"
+	ContentImage            ContentBlockType = "image"
+	ContentDocument         ContentBlockType = "document"
+	ContentRedactedThinking ContentBlockType = "redacted_thinking"
 )
 
 // ContentBlock represents a single block of content within a message.
@@ -25,13 +28,33 @@ const (
 type ContentBlock struct {
 	Type      ContentBlockType `json:"type"`
 	Text      string           `json:"text,omitempty"`
-	ID        string           `json:"id,omitempty"`         // tool_use ID
-	Name      string           `json:"name,omitempty"`       // tool name
-	Input     json.RawMessage  `json:"input,omitempty"`      // tool input JSON
+	ID        string           `json:"id,omitempty"`          // tool_use ID
+	Name      string           `json:"name,omitempty"`        // tool name
+	Input     json.RawMessage  `json:"input,omitempty"`       // tool input JSON
 	ToolUseID string           `json:"tool_use_id,omitempty"` // for tool_result
-	Content   string           `json:"content,omitempty"`    // tool result content
+	Content   string           `json:"content,omitempty"`     // tool result content
 	IsError   bool             `json:"is_error,omitempty"`
-	Thinking  string           `json:"thinking,omitempty"` // thinking text
+	Thinking  string           `json:"thinking,omitempty"`    // thinking text
+
+	// Image support (type="image")
+	Source *ImageSource `json:"source,omitempty"`
+
+	// Document support (type="document")
+	DocumentSource *DocumentSource `json:"document_source,omitempty"`
+}
+
+// ImageSource represents a base64-encoded image to send to the API.
+type ImageSource struct {
+	Type      string `json:"type"`       // "base64"
+	MediaType string `json:"media_type"` // e.g., "image/png", "image/jpeg"
+	Data      string `json:"data"`       // base64-encoded image data
+}
+
+// DocumentSource represents a base64-encoded document (PDF) to send to the API.
+type DocumentSource struct {
+	Type      string `json:"type"`       // "base64"
+	MediaType string `json:"media_type"` // "application/pdf"
+	Data      string `json:"data"`       // base64-encoded document data
 }
 
 // Message represents a conversation message (user or assistant).
@@ -41,11 +64,22 @@ type Message struct {
 }
 
 // Usage tracks token counts from an API response.
+// Includes all 7+ fields that Claude Code tracks for cost calculation
+// and analytics, including cache, server tool use, and ephemeral tokens.
 type Usage struct {
-	InputTokens              int `json:"input_tokens"`
-	OutputTokens             int `json:"output_tokens"`
-	CacheCreationInputTokens int `json:"cache_creation_input_tokens,omitempty"`
-	CacheReadInputTokens     int `json:"cache_read_input_tokens,omitempty"`
+	InputTokens              int                  `json:"input_tokens"`
+	OutputTokens             int                  `json:"output_tokens"`
+	CacheCreationInputTokens int                  `json:"cache_creation_input_tokens,omitempty"`
+	CacheReadInputTokens     int                  `json:"cache_read_input_tokens,omitempty"`
+	ServerToolUse            *ServerToolUseUsage   `json:"server_tool_use,omitempty"`
+	Ephemeral1hInputTokens   int                  `json:"ephemeral_1h_input_tokens,omitempty"`
+}
+
+// ServerToolUseUsage tracks usage from server-side tool invocations
+// (e.g., web search, web fetch) that the API performs on behalf of the user.
+type ServerToolUseUsage struct {
+	WebSearchRequests int `json:"web_search_requests,omitempty"`
+	WebFetchRequests  int `json:"web_fetch_requests,omitempty"`
 }
 
 // ToParam converts a Message to the SDK's MessageParam for sending back to the API.
@@ -62,6 +96,20 @@ func (m *Message) ToParam() anthropic.MessageParam {
 		case ContentToolResult:
 			result := anthropic.NewToolResultBlock(cb.ToolUseID, cb.Content, cb.IsError)
 			blocks = append(blocks, result)
+		case ContentImage:
+			if cb.Source != nil {
+				blocks = append(blocks, anthropic.NewImageBlockBase64(cb.Source.MediaType, cb.Source.Data))
+			}
+		case ContentDocument:
+			if cb.DocumentSource != nil {
+				blocks = append(blocks, anthropic.NewDocumentBlock(anthropic.Base64PDFSourceParam{
+					Data: cb.DocumentSource.Data,
+				}))
+			}
+		case ContentRedactedThinking:
+			// Redacted thinking blocks are read-only from the API;
+			// they are included as-is in conversation history for continuity.
+			// The SDK doesn't have a specific constructor, so we skip them.
 		}
 	}
 	return anthropic.MessageParam{
@@ -154,6 +202,10 @@ func MessageFromResponse(msg *anthropic.Message) Message {
 			blocks = append(blocks, ContentBlock{
 				Type:     ContentThinking,
 				Thinking: cb.Thinking,
+			})
+		case "redacted_thinking":
+			blocks = append(blocks, ContentBlock{
+				Type: ContentRedactedThinking,
 			})
 		}
 	}
