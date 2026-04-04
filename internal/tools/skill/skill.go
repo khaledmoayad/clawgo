@@ -16,7 +16,8 @@ import (
 )
 
 type input struct {
-	Name string `json:"name"`
+	Skill string `json:"skill"`
+	Args  string `json:"args,omitempty"`
 }
 
 // SkillTool loads skill files from the skills directories.
@@ -43,8 +44,8 @@ func (t *SkillTool) Call(_ context.Context, inp json.RawMessage, toolCtx *tools.
 	if err := tools.ValidateInput(inp, &in); err != nil {
 		return tools.ErrorResult(err.Error()), nil
 	}
-	if strings.TrimSpace(in.Name) == "" {
-		return tools.ErrorResult("required field \"name\" is missing or empty"), nil
+	if strings.TrimSpace(in.Skill) == "" {
+		return tools.ErrorResult("required field \"skill\" is missing or empty"), nil
 	}
 
 	// Determine config directory
@@ -68,13 +69,20 @@ func (t *SkillTool) Call(_ context.Context, inp json.RawMessage, toolCtx *tools.
 
 	// Find the requested skill by name
 	for _, s := range allSkills {
-		if s.Name == in.Name {
+		if s.Name == in.Skill {
 			result := tools.TextResult(s.Content)
 			// If frontmatter has AllowedTools, include in metadata
 			if s.Frontmatter != nil && len(s.Frontmatter.AllowedTools) > 0 {
 				result.Metadata = map[string]any{
 					"allowed_tools": s.Frontmatter.AllowedTools,
 				}
+			}
+			// Include args in metadata if provided
+			if in.Args != "" {
+				if result.Metadata == nil {
+					result.Metadata = map[string]any{}
+				}
+				result.Metadata["args"] = in.Args
 			}
 			return result, nil
 		}
@@ -83,7 +91,7 @@ func (t *SkillTool) Call(_ context.Context, inp json.RawMessage, toolCtx *tools.
 	// Skill not found -- list available skills
 	names := skills.SkillNames(allSkills)
 	if len(names) > 0 {
-		return tools.TextResult(fmt.Sprintf("Skill %q not found. Available skills: %s", in.Name, strings.Join(names, ", "))), nil
+		return tools.TextResult(fmt.Sprintf("Skill %q not found. Available skills: %s", in.Skill, strings.Join(names, ", "))), nil
 	}
-	return tools.TextResult(fmt.Sprintf("Skill %q not found. No skills are available in the search paths.", in.Name)), nil
+	return tools.TextResult(fmt.Sprintf("Skill %q not found. No skills are available in the search paths.", in.Skill)), nil
 }

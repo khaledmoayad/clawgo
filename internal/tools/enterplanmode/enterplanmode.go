@@ -19,7 +19,7 @@ func New() *EnterPlanModeTool { return &EnterPlanModeTool{} }
 
 func (t *EnterPlanModeTool) Name() string                { return "EnterPlanMode" }
 func (t *EnterPlanModeTool) Description() string          { return toolDescription }
-func (t *EnterPlanModeTool) IsReadOnly() bool             { return false }
+func (t *EnterPlanModeTool) IsReadOnly() bool             { return true }
 func (t *EnterPlanModeTool) InputSchema() json.RawMessage { return json.RawMessage(inputSchemaJSON) }
 
 // IsConcurrencySafe returns false because it modifies the permission state.

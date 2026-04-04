@@ -6,14 +6,19 @@ package exitplanmode
 import (
 	"context"
 	"encoding/json"
-	"strings"
 
 	"github.com/khaledmoayad/clawgo/internal/permissions"
 	"github.com/khaledmoayad/clawgo/internal/tools"
 )
 
+// allowedPrompt represents a prompt-based permission request.
+type allowedPrompt struct {
+	Tool   string `json:"tool"`
+	Prompt string `json:"prompt"`
+}
+
 type input struct {
-	PlanSummary string `json:"plan_summary"`
+	AllowedPrompts []allowedPrompt `json:"allowedPrompts,omitempty"`
 }
 
 // ExitPlanModeTool switches back from plan mode to default permission mode.
@@ -40,14 +45,12 @@ func (t *ExitPlanModeTool) Call(_ context.Context, inp json.RawMessage, _ *tools
 	if err := tools.ValidateInput(inp, &in); err != nil {
 		return tools.ErrorResult(err.Error()), nil
 	}
-	if strings.TrimSpace(in.PlanSummary) == "" {
-		return tools.ErrorResult("required field \"plan_summary\" is missing or empty"), nil
-	}
 
 	return &tools.ToolResult{
-		Content: []tools.ContentBlock{{Type: "text", Text: in.PlanSummary}},
+		Content: []tools.ContentBlock{{Type: "text", Text: "Exited plan mode."}},
 		Metadata: map[string]any{
-			"plan_mode": false,
+			"plan_mode":       false,
+			"allowedPrompts":  in.AllowedPrompts,
 		},
 		ContextModifier: func(ctx *tools.ToolUseContext) {
 			if ctx.PermCtx != nil {

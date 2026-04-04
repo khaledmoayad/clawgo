@@ -13,7 +13,7 @@ import (
 )
 
 type input struct {
-	TaskID string `json:"task_id"`
+	TaskID string `json:"taskId"`
 }
 
 // TaskGetTool retrieves the status and details of a background task.
@@ -44,7 +44,7 @@ func (t *TaskGetTool) Call(_ context.Context, inp json.RawMessage, _ *tools.Tool
 		return tools.ErrorResult(err.Error()), nil
 	}
 	if strings.TrimSpace(in.TaskID) == "" {
-		return tools.ErrorResult("required field \"task_id\" is missing or empty"), nil
+		return tools.ErrorResult("required field \"taskId\" is missing or empty"), nil
 	}
 
 	task, ok := t.store.Get(in.TaskID)

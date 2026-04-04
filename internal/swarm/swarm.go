@@ -99,6 +99,26 @@ func (m *Manager) DeleteTeam(name string) error {
 	return nil
 }
 
+// CurrentTeam returns the name of the current (most recently created) team,
+// or empty string if no teams exist. In the TypeScript version this comes
+// from appState.teamContext.teamName; here we track the last-created team.
+func (m *Manager) CurrentTeam() string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	// Return the most recently created team
+	var latest *Team
+	for _, t := range m.teams {
+		if latest == nil || t.CreatedAt.After(latest.CreatedAt) {
+			latest = t
+		}
+	}
+	if latest != nil {
+		return latest.Name
+	}
+	return ""
+}
+
 // GetTeam returns a team by name.
 func (m *Manager) GetTeam(name string) (*Team, bool) {
 	m.mu.RLock()

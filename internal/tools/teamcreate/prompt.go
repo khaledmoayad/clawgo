@@ -9,14 +9,14 @@ Teams enable coordinated multi-agent workflows with leader-worker patterns. All 
 const inputSchemaJSON = `{
     "type": "object",
     "properties": {
-        "name": {
+        "team_name": {
             "type": "string",
-            "description": "The name for the new team"
+            "description": "Name for the new team to create"
         },
         "description": {
             "type": "string",
             "description": "Optional description of the team's purpose"
         }
     },
-    "required": ["name"]
+    "required": ["team_name"]
 }`

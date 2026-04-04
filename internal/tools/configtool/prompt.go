@@ -1,25 +1,24 @@
 package configtool
 
 // toolDescription is the human-readable description sent to the Anthropic API.
-const toolDescription = `Read and modify project configuration settings. Supports getting, setting, and listing configuration values from the project's .claude/settings.json.`
+const toolDescription = `Read and modify project configuration settings. Supports getting and setting configuration values from the project's .claude/settings.json. Omit value to get current setting; provide value to set it.`
 
 // inputSchemaJSON is the JSON Schema for ConfigTool input.
 const inputSchemaJSON = `{
     "type": "object",
     "properties": {
-        "action": {
+        "setting": {
             "type": "string",
-            "enum": ["get", "set", "list"],
-            "description": "The config operation to perform"
-        },
-        "key": {
-            "type": "string",
-            "description": "Configuration key (required for get and set)"
+            "description": "The setting key (e.g., \"theme\", \"model\", \"permissions.defaultMode\")"
         },
         "value": {
-            "type": "string",
-            "description": "Configuration value (required for set)"
+            "description": "The new value. Omit to get current value.",
+            "oneOf": [
+                {"type": "string"},
+                {"type": "boolean"},
+                {"type": "number"}
+            ]
         }
     },
-    "required": ["action"]
+    "required": ["setting"]
 }`

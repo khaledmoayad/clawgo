@@ -7,10 +7,14 @@ const toolDescription = `Load a skill file by name. Skills provide specialized k
 const inputSchemaJSON = `{
     "type": "object",
     "properties": {
-        "name": {
+        "skill": {
             "type": "string",
-            "description": "Skill name to load"
+            "description": "The skill name. E.g., \"commit\", \"review-pr\", or \"pdf\""
+        },
+        "args": {
+            "type": "string",
+            "description": "Optional arguments for the skill"
         }
     },
-    "required": ["name"]
+    "required": ["skill"]
 }`

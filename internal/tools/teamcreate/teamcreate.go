@@ -14,7 +14,7 @@ import (
 )
 
 type input struct {
-	Name        string `json:"name"`
+	TeamName    string `json:"team_name"`
 	Description string `json:"description,omitempty"`
 }
 
@@ -45,14 +45,14 @@ func (t *TeamCreateTool) Call(_ context.Context, inp json.RawMessage, _ *tools.T
 	if err := tools.ValidateInput(inp, &in); err != nil {
 		return tools.ErrorResult(err.Error()), nil
 	}
-	if strings.TrimSpace(in.Name) == "" {
-		return tools.ErrorResult("required field \"name\" is missing or empty"), nil
+	if strings.TrimSpace(in.TeamName) == "" {
+		return tools.ErrorResult("required field \"team_name\" is missing or empty"), nil
 	}
 
 	if t.Manager == nil {
 		return tools.ErrorResult("swarm manager not available"), nil
 	}
 
-	team := t.Manager.CreateTeam(in.Name)
+	team := t.Manager.CreateTeam(in.TeamName)
 	return tools.TextResult(fmt.Sprintf("Team %q created at %s.", team.Name, team.CreatedAt.Format("15:04:05"))), nil
 }

@@ -9,10 +9,10 @@ Returns the task's current status, type, description, and any output.`
 const inputSchemaJSON = `{
     "type": "object",
     "properties": {
-        "task_id": {
+        "taskId": {
             "type": "string",
             "description": "The ID of the task to retrieve"
         }
     },
-    "required": ["task_id"]
+    "required": ["taskId"]
 }`

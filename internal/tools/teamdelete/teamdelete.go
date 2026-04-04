@@ -5,19 +5,13 @@ package teamdelete
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"strings"
 
 	"github.com/khaledmoayad/clawgo/internal/permissions"
 	"github.com/khaledmoayad/clawgo/internal/swarm"
 	"github.com/khaledmoayad/clawgo/internal/tools"
 )
 
-type input struct {
-	Name string `json:"name"`
-}
-
-// TeamDeleteTool deletes an existing team and cancels all its running workers.
+// TeamDeleteTool deletes the current team and cancels all its running workers.
 type TeamDeleteTool struct {
 	Manager *swarm.Manager
 }
@@ -39,22 +33,21 @@ func (t *TeamDeleteTool) CheckPermissions(_ context.Context, _ json.RawMessage, 
 	return permissions.CheckPermission("TeamDelete", false, permCtx), nil
 }
 
-func (t *TeamDeleteTool) Call(_ context.Context, inp json.RawMessage, _ *tools.ToolUseContext) (*tools.ToolResult, error) {
-	var in input
-	if err := tools.ValidateInput(inp, &in); err != nil {
-		return tools.ErrorResult(err.Error()), nil
-	}
-	if strings.TrimSpace(in.Name) == "" {
-		return tools.ErrorResult("required field \"name\" is missing or empty"), nil
-	}
-
+func (t *TeamDeleteTool) Call(_ context.Context, _ json.RawMessage, _ *tools.ToolUseContext) (*tools.ToolResult, error) {
 	if t.Manager == nil {
 		return tools.ErrorResult("swarm manager not available"), nil
 	}
 
-	if err := t.Manager.DeleteTeam(in.Name); err != nil {
+	// Delete the current team (Claude Code's TeamDelete has no parameters --
+	// it deletes the current team context)
+	currentTeam := t.Manager.CurrentTeam()
+	if currentTeam == "" {
+		return tools.ErrorResult("no active team to delete"), nil
+	}
+
+	if err := t.Manager.DeleteTeam(currentTeam); err != nil {
 		return tools.ErrorResult(err.Error()), nil
 	}
 
-	return tools.TextResult(fmt.Sprintf("Team %q deleted. All running workers in this team have been cancelled.", in.Name)), nil
+	return tools.TextResult("Team deleted. All running workers have been cancelled."), nil
 }

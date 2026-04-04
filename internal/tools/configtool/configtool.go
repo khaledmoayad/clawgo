@@ -17,9 +17,8 @@ import (
 )
 
 type input struct {
-	Action string `json:"action"` // "get", "set", "list"
-	Key    string `json:"key,omitempty"`
-	Value  string `json:"value,omitempty"`
+	Setting string          `json:"setting"`
+	Value   json.RawMessage `json:"value,omitempty"`
 }
 
 // ConfigTool reads and modifies project configuration.
@@ -36,13 +35,14 @@ func (t *ConfigTool) InputSchema() json.RawMessage { return json.RawMessage(inpu
 // IsConcurrencySafe returns false because "set" action modifies config files.
 func (t *ConfigTool) IsConcurrencySafe(_ json.RawMessage) bool { return false }
 
-// CheckPermissions returns Ask for "set" actions, Allow for "get" and "list".
+// CheckPermissions returns Ask for "set" actions (when value is present), Allow for "get".
 func (t *ConfigTool) CheckPermissions(_ context.Context, inp json.RawMessage, permCtx *permissions.PermissionContext) (permissions.PermissionResult, error) {
 	var in input
 	if err := json.Unmarshal(inp, &in); err != nil {
 		return permissions.Ask, nil
 	}
-	if in.Action == "set" {
+	// If value is present, it's a set operation -- requires permission
+	if len(in.Value) > 0 && string(in.Value) != "null" {
 		return permissions.CheckPermission("Config", false, permCtx), nil
 	}
 	return permissions.Allow, nil
@@ -52,9 +52,6 @@ func (t *ConfigTool) Call(_ context.Context, inp json.RawMessage, toolCtx *tools
 	var in input
 	if err := tools.ValidateInput(inp, &in); err != nil {
 		return tools.ErrorResult(err.Error()), nil
-	}
-	if in.Action != "get" && in.Action != "set" && in.Action != "list" {
-		return tools.ErrorResult(fmt.Sprintf("invalid action %q (must be get, set, or list)", in.Action)), nil
 	}
 
 	// Determine config file path
@@ -73,8 +70,8 @@ func (t *ConfigTool) Call(_ context.Context, inp json.RawMessage, toolCtx *tools
 		}
 	}
 
-	switch in.Action {
-	case "list":
+	// If no setting provided, list all settings
+	if strings.TrimSpace(in.Setting) == "" {
 		if len(config) == 0 {
 			return tools.TextResult("No configuration values set."), nil
 		}
@@ -89,51 +86,43 @@ func (t *ConfigTool) Call(_ context.Context, inp json.RawMessage, toolCtx *tools
 			sb.WriteString(fmt.Sprintf("%s = %s\n", k, string(v)))
 		}
 		return tools.TextResult(sb.String()), nil
+	}
 
-	case "get":
-		if strings.TrimSpace(in.Key) == "" {
-			return tools.ErrorResult("key is required for get action"), nil
-		}
-		val, ok := config[in.Key]
+	// Infer GET vs SET from whether value is present
+	isSet := len(in.Value) > 0 && string(in.Value) != "null"
+
+	if !isSet {
+		// GET operation
+		val, ok := config[in.Setting]
 		if !ok {
-			return tools.TextResult(fmt.Sprintf("Key %q is not set.", in.Key)), nil
+			return tools.TextResult(fmt.Sprintf("Key %q is not set.", in.Setting)), nil
 		}
 		v, _ := json.Marshal(val)
-		return tools.TextResult(fmt.Sprintf("%s = %s", in.Key, string(v))), nil
-
-	case "set":
-		if strings.TrimSpace(in.Key) == "" {
-			return tools.ErrorResult("key is required for set action"), nil
-		}
-		if strings.TrimSpace(in.Value) == "" {
-			return tools.ErrorResult("value is required for set action"), nil
-		}
-
-		// Try to parse value as JSON, fall back to string
-		var parsedValue any
-		if err := json.Unmarshal([]byte(in.Value), &parsedValue); err != nil {
-			parsedValue = in.Value
-		}
-		config[in.Key] = parsedValue
-
-		// Create parent directory if needed
-		dir := filepath.Dir(configPath)
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			return tools.ErrorResult(fmt.Sprintf("failed to create directory: %s", err.Error())), nil
-		}
-
-		// Write config
-		jsonData, err := json.MarshalIndent(config, "", "  ")
-		if err != nil {
-			return tools.ErrorResult(fmt.Sprintf("failed to marshal config: %s", err.Error())), nil
-		}
-		if err := os.WriteFile(configPath, jsonData, 0644); err != nil {
-			return tools.ErrorResult(fmt.Sprintf("failed to write config: %s", err.Error())), nil
-		}
-
-		return tools.TextResult(fmt.Sprintf("Set %s = %s", in.Key, in.Value)), nil
-
-	default:
-		return tools.ErrorResult(fmt.Sprintf("unknown action: %s", in.Action)), nil
+		return tools.TextResult(fmt.Sprintf("%s = %s", in.Setting, string(v))), nil
 	}
+
+	// SET operation
+	var parsedValue any
+	if err := json.Unmarshal(in.Value, &parsedValue); err != nil {
+		// Fall back to treating it as a raw string
+		parsedValue = string(in.Value)
+	}
+	config[in.Setting] = parsedValue
+
+	// Create parent directory if needed
+	dir := filepath.Dir(configPath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return tools.ErrorResult(fmt.Sprintf("failed to create directory: %s", err.Error())), nil
+	}
+
+	// Write config
+	jsonData, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return tools.ErrorResult(fmt.Sprintf("failed to marshal config: %s", err.Error())), nil
+	}
+	if err := os.WriteFile(configPath, jsonData, 0644); err != nil {
+		return tools.ErrorResult(fmt.Sprintf("failed to write config: %s", err.Error())), nil
+	}
+
+	return tools.TextResult(fmt.Sprintf("Set %s = %s", in.Setting, string(in.Value))), nil
 }
