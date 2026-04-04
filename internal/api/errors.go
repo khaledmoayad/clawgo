@@ -3,6 +3,9 @@ package api
 import (
 	"errors"
 	"net"
+	"net/http"
+	"strconv"
+	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
 )
@@ -84,4 +87,75 @@ func IsRetryable(err error) bool {
 	default:
 		return false
 	}
+}
+
+// RateLimitInfo holds parsed rate limit information from Anthropic API response headers.
+type RateLimitInfo struct {
+	// RetryAfter is the duration from the "retry-after" header (in seconds).
+	RetryAfter time.Duration
+
+	// UnifiedResetDuration is the duration until the rate limit resets,
+	// computed from the "anthropic-ratelimit-unified-reset" header (Unix epoch seconds).
+	// Clamped to 0 if the reset time is in the past.
+	UnifiedResetDuration time.Duration
+
+	// OverageDisabledReason from the "anthropic-ratelimit-unified-overage-disabled-reason" header.
+	// Indicates why overage (extra usage beyond quota) is disabled for this account.
+	OverageDisabledReason string
+}
+
+// ParseRateLimitHeaders extracts rate limit information from HTTP response headers.
+// Returns nil if no rate limit headers are present.
+//
+// Recognized headers:
+//   - "retry-after": integer seconds until the client should retry
+//   - "anthropic-ratelimit-unified-reset": Unix epoch seconds when the rate limit window resets
+//   - "anthropic-ratelimit-unified-overage-disabled-reason": why overage is disabled
+func ParseRateLimitHeaders(headers http.Header) *RateLimitInfo {
+	retryAfterStr := headers.Get("retry-after")
+	resetStr := headers.Get("anthropic-ratelimit-unified-reset")
+	overageReason := headers.Get("anthropic-ratelimit-unified-overage-disabled-reason")
+
+	// Return nil if no rate limit headers are present
+	if retryAfterStr == "" && resetStr == "" && overageReason == "" {
+		return nil
+	}
+
+	info := &RateLimitInfo{}
+	hasData := false
+
+	// Parse retry-after as integer seconds
+	if retryAfterStr != "" {
+		seconds, err := strconv.Atoi(retryAfterStr)
+		if err == nil && seconds > 0 {
+			info.RetryAfter = time.Duration(seconds) * time.Second
+			hasData = true
+		}
+	}
+
+	// Parse unified reset as Unix epoch seconds and compute duration until reset
+	if resetStr != "" {
+		resetUnix, err := strconv.ParseInt(resetStr, 10, 64)
+		if err == nil {
+			resetTime := time.Unix(resetUnix, 0)
+			duration := time.Until(resetTime)
+			if duration < 0 {
+				duration = 0
+			}
+			info.UnifiedResetDuration = duration
+			hasData = true
+		}
+	}
+
+	// Overage disabled reason
+	if overageReason != "" {
+		info.OverageDisabledReason = overageReason
+		hasData = true
+	}
+
+	if !hasData {
+		return nil
+	}
+
+	return info
 }
