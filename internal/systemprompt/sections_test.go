@@ -33,9 +33,9 @@ func TestGetSystemSection(t *testing.T) {
 	if !strings.Contains(s, "# System") {
 		t.Error("system section missing '# System' header")
 	}
-	// Must mention tool_use blocks
-	if !strings.Contains(s, "tool_use") {
-		t.Error("system section missing 'tool_use' reference")
+	// Must mention tool use (from "outside of tool use" bullet)
+	if !strings.Contains(s, "tool use") {
+		t.Error("system section missing 'tool use' reference")
 	}
 	// Must mention system-reminder tags
 	if !strings.Contains(s, "system-reminder") {
@@ -159,9 +159,9 @@ func TestGetSessionGuidanceSection(t *testing.T) {
 	if !strings.Contains(s, "# Session-specific guidance") {
 		t.Error("session guidance section missing header")
 	}
-	// Must mention Agent tool
-	if !strings.Contains(s, "Agent tool") || !strings.Contains(s, "AgentTool") {
-		t.Error("session guidance section missing Agent tool reference")
+	// Must mention AgentTool
+	if !strings.Contains(s, "AgentTool") {
+		t.Error("session guidance section missing AgentTool reference")
 	}
 	// Must mention shell ! prefix
 	if !strings.Contains(s, "! <command>") || !strings.Contains(s, "!") {
