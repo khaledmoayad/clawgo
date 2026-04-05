@@ -11,6 +11,7 @@ import (
 // Task represents a background task entry.
 type Task struct {
 	ID          string             `json:"id"`
+	Name        string             `json:"name,omitempty"` // Addressable name for the task (e.g., agent name)
 	Description string             `json:"description"`
 	Type        string             `json:"type"`   // "local_bash", "local_agent"
 	Status      string             `json:"status"` // "pending", "running", "completed", "stopped", "failed"

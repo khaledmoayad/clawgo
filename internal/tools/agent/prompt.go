@@ -102,6 +102,10 @@ const inputSchemaJSON = `{
             "type": "string",
             "description": "The task for the sub-agent"
         },
+        "description": {
+            "type": "string",
+            "description": "Short description (3-5 words) of what the agent will do"
+        },
         "model": {
             "type": "string",
             "description": "Model override for the sub-agent"
@@ -117,20 +121,24 @@ const inputSchemaJSON = `{
         },
         "name": {
             "type": "string",
-            "description": "Short name for the agent (one or two words, lowercase)"
+            "description": "Name for the spawned agent. Makes it addressable via SendMessage({to: name}) while running."
         },
-        "description": {
+        "team_name": {
             "type": "string",
-            "description": "Short description (3-5 words) of what the agent will do"
+            "description": "Team name for spawning. Uses current team context if omitted."
         },
         "run_in_background": {
             "type": "boolean",
-            "description": "Run the agent in the background. You will be notified when it completes."
+            "description": "Set to true to run this agent in the background. You will be notified when it completes."
         },
         "isolation": {
             "type": "string",
             "enum": ["worktree"],
-            "description": "Run in an isolated git worktree"
+            "description": "Isolation mode. \"worktree\" creates a temporary git worktree so the agent works on an isolated copy of the repo."
+        },
+        "cwd": {
+            "type": "string",
+            "description": "Absolute path to run the agent in. Overrides the working directory for all filesystem and shell operations within this agent. Mutually exclusive with isolation: \"worktree\"."
         }
     },
     "required": ["prompt"]
