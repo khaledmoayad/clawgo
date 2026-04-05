@@ -7,6 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/khaledmoayad/clawgo/internal/api"
+	"github.com/khaledmoayad/clawgo/internal/tui/renderers"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -264,4 +265,151 @@ func TestModel_ViewPermission(t *testing.T) {
 	assert.Contains(t, view, "[y] Approve", "permission view should show approve option")
 	assert.Contains(t, view, "[n] Deny", "permission view should show deny option")
 	assert.Contains(t, view, "[a] Always approve", "permission view should show always option")
+}
+
+// --- Wave 1 integration tests ---
+
+func TestModel_VirtualScrollIntegrated(t *testing.T) {
+	m := newTestModel()
+	m.width = 80
+	m.height = 30
+
+	// Add many messages to test virtual scroll integration
+	for i := 0; i < 100; i++ {
+		result, _ := m.Update(SubmitMsg{Text: "msg"})
+		m = result.(Model)
+		result, _ = m.Update(StreamEventMsg{Event: api.StreamEvent{Type: api.EventText, Text: "response"}})
+		m = result.(Model)
+		result, _ = m.Update(StreamEventMsg{Event: api.StreamEvent{Type: api.EventMessageComplete}})
+		m = result.(Model)
+	}
+
+	// Virtual scroll should have messages synced
+	assert.Greater(t, m.virtualScroll.TotalLines(), 0, "virtual scroll should have content")
+
+	// View should produce output (not crash)
+	view := m.ViewContent()
+	assert.NotEmpty(t, view, "view should not be empty with 100 messages")
+}
+
+func TestModel_OverlayCtrlK(t *testing.T) {
+	m := newTestModel()
+	m.width = 80
+	m.height = 30
+
+	// Add some messages first
+	result, _ := m.Update(SubmitMsg{Text: "hello"})
+	m = result.(Model)
+	result, _ = m.Update(StreamEventMsg{Event: api.StreamEvent{Type: api.EventText, Text: "world"}})
+	m = result.(Model)
+	result, _ = m.Update(StreamEventMsg{Event: api.StreamEvent{Type: api.EventMessageComplete}})
+	m = result.(Model)
+
+	// Ctrl+K should open message selector overlay
+	keyMsg := tea.KeyPressMsg(tea.Key{Code: 'k', Mod: tea.ModCtrl})
+	result, _ = m.Update(keyMsg)
+	m = result.(Model)
+
+	assert.True(t, m.overlayMgr.IsActive(), "overlay should be active after Ctrl+K")
+}
+
+func TestModel_StatusLineUpdates(t *testing.T) {
+	m := newTestModel()
+
+	// Send context update
+	result, _ := m.Update(ContextUpdateMsg{Percent: 42, Tokens: "21k / 200k"})
+	m = result.(Model)
+
+	view := m.statusLine.View()
+	assert.Contains(t, view, "42%", "status line should show context percentage")
+	assert.Contains(t, view, "21k / 200k", "status line should show token count")
+}
+
+func TestModel_ToastLifecycle(t *testing.T) {
+	m := newTestModel()
+	m.width = 80
+
+	// Send a toast message
+	result, cmd := m.Update(ToastMsg{Level: "info", Message: "Test notification"})
+	m = result.(Model)
+
+	// The toast should be visible
+	notifView := m.notifs.View()
+	assert.Contains(t, notifView, "Test notification", "toast should be visible")
+
+	// There should be a dismiss command queued
+	assert.NotNil(t, cmd, "toast should queue a dismiss command")
+}
+
+func TestModel_SuggestionTrigger(t *testing.T) {
+	m := newTestModel()
+	m.width = 80
+
+	// Trigger suggestion update
+	result, _ := m.Update(SuggestionUpdateMsg{Input: "/hel", CursorPos: 4})
+	m = result.(Model)
+
+	// We can't easily test async suggestion results without mocking the provider
+	// but we verify the message handler doesn't crash
+	assert.Equal(t, StateInput, m.CurrentState())
+}
+
+func TestModel_ModelChange(t *testing.T) {
+	m := newTestModel()
+	assert.Equal(t, "test-model", m.config.Model)
+
+	// Send model change
+	result, _ := m.Update(ModelChangeMsg{Name: "claude-opus-4-20250514"})
+	m = result.(Model)
+
+	assert.Equal(t, "claude-opus-4-20250514", m.config.Model)
+	// View should reflect new model name in header
+	view := m.ViewContent()
+	assert.Contains(t, view, "claude-opus-4-20250514", "header should show new model name")
+}
+
+func TestModel_RendererRegistryIntegrated(t *testing.T) {
+	m := newTestModel()
+
+	// Registry should be initialized with renderers
+	assert.NotNil(t, m.registry, "registry should be initialized")
+	assert.Greater(t, m.registry.Count(), 40, "registry should have 40+ renderers")
+}
+
+func TestModel_OutputRegistryDispatch(t *testing.T) {
+	reg := renderers.NewRegistry()
+	out := NewOutputModelWithRegistry(reg)
+	out.SetWidth(80)
+
+	// Add messages and check rendering dispatches through registry
+	out.AddMessage(DisplayMessage{Role: "user", Content: "Hello"})
+	out.AddMessage(DisplayMessage{Role: "assistant", Content: "World"})
+	out.AddMessage(DisplayMessage{Role: "error", Content: "Oops"})
+
+	// RenderSingle should work
+	rendered := out.RenderSingle(0)
+	assert.NotEmpty(t, rendered, "RenderSingle should return content for user message")
+
+	rendered = out.RenderSingle(1)
+	assert.NotEmpty(t, rendered, "RenderSingle should return content for assistant message")
+
+	// Out of range returns empty
+	assert.Empty(t, out.RenderSingle(-1), "negative index should return empty")
+	assert.Empty(t, out.RenderSingle(99), "out of range index should return empty")
+}
+
+func TestModel_HelpDialogShow(t *testing.T) {
+	m := newTestModel()
+	m.width = 80
+	m.height = 30
+
+	// Send ShowHelpMsg
+	result, _ := m.Update(ShowHelpMsg{})
+	m = result.(Model)
+
+	assert.True(t, m.helpDialog.IsActive(), "help dialog should be active after ShowHelpMsg")
+
+	// View should contain help content
+	view := m.ViewContent()
+	assert.Contains(t, view, "Help", "view should contain help title when dialog is active")
 }

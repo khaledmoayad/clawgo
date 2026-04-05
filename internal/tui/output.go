@@ -5,6 +5,7 @@ import (
 
 	"github.com/khaledmoayad/clawgo/internal/tui/diff"
 	"github.com/khaledmoayad/clawgo/internal/tui/render"
+	"github.com/khaledmoayad/clawgo/internal/tui/renderers"
 )
 
 // DisplayMessage represents a message in the conversation display.
@@ -21,6 +22,7 @@ type OutputModel struct {
 	streamingText strings.Builder // Buffer for current streaming response
 	isStreaming   bool
 	width         int // Terminal width for markdown/diff rendering
+	registry      *renderers.RendererRegistry
 }
 
 // SetWidth sets the terminal width used for rendering.
@@ -31,6 +33,15 @@ func (m *OutputModel) SetWidth(w int) {
 // NewOutputModel creates an output sub-model.
 func NewOutputModel() OutputModel {
 	return OutputModel{messages: make([]DisplayMessage, 0)}
+}
+
+// NewOutputModelWithRegistry creates an output sub-model with a renderer registry
+// for dispatching message rendering through the unified registry.
+func NewOutputModelWithRegistry(reg *renderers.RendererRegistry) OutputModel {
+	return OutputModel{
+		messages: make([]DisplayMessage, 0),
+		registry: reg,
+	}
 }
 
 // AddMessage adds a complete message to the display.
@@ -79,7 +90,33 @@ func (m OutputModel) View() string {
 }
 
 // renderMessage formats a single message for display.
+// When a registry is set, dispatches through the renderer registry.
+// Otherwise falls back to legacy switch-based rendering.
 func (m OutputModel) renderMessage(msg DisplayMessage) string {
+	if m.registry != nil {
+		return m.registry.Render(renderers.DisplayMessage{
+			Type:        mapRoleToType(msg.Role, msg.ToolName),
+			Role:        msg.Role,
+			Content:     msg.Content,
+			ToolName:    msg.ToolName,
+			DiffContent: msg.DiffContent,
+		}, m.width)
+	}
+	return m.renderMessageLegacy(msg)
+}
+
+// RenderSingle renders a single message by index for virtualScroll's
+// height cache calculation. Returns empty string if index is out of range.
+func (m OutputModel) RenderSingle(idx int) string {
+	if idx < 0 || idx >= len(m.messages) {
+		return ""
+	}
+	return m.renderMessage(m.messages[idx])
+}
+
+// renderMessageLegacy formats a single message using the original switch-based rendering.
+// Kept for backward compatibility when no registry is configured.
+func (m OutputModel) renderMessageLegacy(msg DisplayMessage) string {
 	var sb strings.Builder
 	switch msg.Role {
 	case "user":
