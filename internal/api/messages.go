@@ -59,8 +59,9 @@ type DocumentSource struct {
 
 // Message represents a conversation message (user or assistant).
 type Message struct {
-	Role    string         `json:"role"` // "user" or "assistant"
-	Content []ContentBlock `json:"content"`
+	Role      string         `json:"role"`                 // "user" or "assistant"
+	Content   []ContentBlock `json:"content"`
+	MessageID string         `json:"message_id,omitempty"` // API response message ID (for merging streaming chunks)
 }
 
 // Usage tracks token counts from an API response.
@@ -210,7 +211,8 @@ func MessageFromResponse(msg *anthropic.Message) Message {
 		}
 	}
 	return Message{
-		Role:    string(msg.Role),
-		Content: blocks,
+		Role:      string(msg.Role),
+		Content:   blocks,
+		MessageID: msg.ID,
 	}
 }
