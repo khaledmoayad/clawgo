@@ -1,14 +1,16 @@
 // Package notebookedit implements the NotebookEditTool for manipulating
-// Jupyter notebook (.ipynb) files. It supports adding, editing, deleting,
-// and inserting cells while preserving notebook metadata and format.
+// Jupyter notebook (.ipynb) files. It supports replace, insert, and delete
+// operations using cell_id-based addressing matching Claude Code's interface.
 package notebookedit
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math/rand"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/khaledmoayad/clawgo/internal/permissions"
@@ -26,6 +28,7 @@ type Notebook struct {
 // Cell represents a single cell in a Jupyter notebook.
 type Cell struct {
 	CellType       string          `json:"cell_type"`
+	ID             string          `json:"id,omitempty"`
 	Source         json.RawMessage `json:"source"`
 	Metadata       json.RawMessage `json:"metadata,omitempty"`
 	Outputs        json.RawMessage `json:"outputs,omitempty"`
@@ -33,25 +36,34 @@ type Cell struct {
 }
 
 type input struct {
-	Path     string `json:"path"`
-	Command  string `json:"command"`
-	CellType string `json:"cell_type"`
-	Index    *int   `json:"index"`
-	Source   string `json:"source"`
+	NotebookPath string `json:"notebook_path"`
+	CellID       string `json:"cell_id,omitempty"`
+	NewSource    string `json:"new_source"`
+	CellType     string `json:"cell_type,omitempty"`
+	EditMode     string `json:"edit_mode,omitempty"` // replace, insert, delete
 }
 
 func (in *input) Validate() error {
-	if strings.TrimSpace(in.Path) == "" {
-		return fmt.Errorf("required field \"path\" is missing or empty")
+	if strings.TrimSpace(in.NotebookPath) == "" {
+		return fmt.Errorf("required field \"notebook_path\" is missing or empty")
 	}
-	if strings.TrimSpace(in.Command) == "" {
-		return fmt.Errorf("required field \"command\" is missing or empty")
+	// Default edit_mode to replace
+	if in.EditMode == "" {
+		in.EditMode = "replace"
 	}
-	validCommands := map[string]bool{
-		"add_cell": true, "edit_cell": true, "delete_cell": true, "insert_cell": true,
+	validModes := map[string]bool{
+		"replace": true, "insert": true, "delete": true,
 	}
-	if !validCommands[in.Command] {
-		return fmt.Errorf("invalid command %q: must be one of add_cell, edit_cell, delete_cell, insert_cell", in.Command)
+	if !validModes[in.EditMode] {
+		return fmt.Errorf("invalid edit_mode %q: must be one of replace, insert, delete", in.EditMode)
+	}
+	// cell_id is required for replace and delete
+	if in.CellID == "" && in.EditMode != "insert" {
+		return fmt.Errorf("cell_id is required for %s mode", in.EditMode)
+	}
+	// cell_type is required for insert
+	if in.EditMode == "insert" && in.CellType == "" {
+		in.CellType = "code" // default to code for insert
 	}
 	return nil
 }
@@ -67,7 +79,7 @@ func (t *NotebookEditTool) Description() string          { return toolDescriptio
 func (t *NotebookEditTool) IsReadOnly() bool             { return false }
 func (t *NotebookEditTool) InputSchema() json.RawMessage { return json.RawMessage(inputSchemaJSON) }
 
-// IsConcurrencySafe returns false — notebook editing modifies files on disk.
+// IsConcurrencySafe returns false -- notebook editing modifies files on disk.
 func (t *NotebookEditTool) IsConcurrencySafe(_ json.RawMessage) bool { return false }
 
 // CheckPermissions returns Ask for write operations (requires user confirmation in default mode).
@@ -85,7 +97,7 @@ func (t *NotebookEditTool) Call(ctx context.Context, inp json.RawMessage, toolCt
 	}
 
 	// Resolve path relative to working directory
-	nbPath := in.Path
+	nbPath := in.NotebookPath
 	if !filepath.IsAbs(nbPath) {
 		nbPath = filepath.Join(toolCtx.WorkingDir, nbPath)
 	}
@@ -102,28 +114,24 @@ func (t *NotebookEditTool) Call(ctx context.Context, inp json.RawMessage, toolCt
 		return tools.ErrorResult(fmt.Sprintf("failed to parse notebook JSON: %s", err)), nil
 	}
 
-	// Execute command
-	switch in.Command {
-	case "add_cell":
-		if err := addCell(&nb, &in); err != nil {
+	// Execute based on edit_mode
+	switch in.EditMode {
+	case "replace":
+		if err := replaceCell(&nb, &in); err != nil {
 			return tools.ErrorResult(err.Error()), nil
 		}
-	case "edit_cell":
-		if err := editCell(&nb, &in); err != nil {
-			return tools.ErrorResult(err.Error()), nil
-		}
-	case "delete_cell":
-		if err := deleteCell(&nb, &in); err != nil {
-			return tools.ErrorResult(err.Error()), nil
-		}
-	case "insert_cell":
+	case "insert":
 		if err := insertCell(&nb, &in); err != nil {
+			return tools.ErrorResult(err.Error()), nil
+		}
+	case "delete":
+		if err := deleteCell(&nb, &in); err != nil {
 			return tools.ErrorResult(err.Error()), nil
 		}
 	}
 
-	// Write modified notebook back with 2-space indentation
-	output, err := json.MarshalIndent(nb, "", "  ")
+	// Write modified notebook back with 1-space indentation (matches TS IPYNB_INDENT = 1)
+	output, err := json.MarshalIndent(nb, "", " ")
 	if err != nil {
 		return tools.ErrorResult(fmt.Sprintf("failed to serialize notebook: %s", err)), nil
 	}
@@ -132,7 +140,30 @@ func (t *NotebookEditTool) Call(ctx context.Context, inp json.RawMessage, toolCt
 		return tools.ErrorResult(fmt.Sprintf("failed to write notebook: %s", err)), nil
 	}
 
-	return tools.TextResult(fmt.Sprintf("Successfully executed %s on %s (%d cells)", in.Command, in.Path, len(nb.Cells))), nil
+	return tools.TextResult(fmt.Sprintf("Successfully executed %s on %s (%d cells)", in.EditMode, in.NotebookPath, len(nb.Cells))), nil
+}
+
+// findCellByID scans cells for a matching ID field.
+// Returns the index or -1 if not found.
+// If cellID is empty, returns -1.
+// As a fallback, if cellID is purely numeric, it is treated as a 0-based index.
+func findCellByID(cells []Cell, cellID string) int {
+	if cellID == "" {
+		return -1
+	}
+	// First try exact ID match
+	for i, c := range cells {
+		if c.ID == cellID {
+			return i
+		}
+	}
+	// Fallback: if cellID is purely numeric, use as 0-based index
+	if idx, err := strconv.Atoi(cellID); err == nil {
+		if idx >= 0 && idx < len(cells) {
+			return idx
+		}
+	}
+	return -1
 }
 
 // sourceToLines converts a source string to a JSON array of line strings,
@@ -151,11 +182,25 @@ func sourceToLines(source string) json.RawMessage {
 	return b
 }
 
-func newCell(cellType, source string) Cell {
+// generateCellID generates a random cell ID for new cells (matches TS behavior).
+func generateCellID() string {
+	const chars = "abcdefghijklmnopqrstuvwxyz0123456789"
+	b := make([]byte, 13)
+	for i := range b {
+		b[i] = chars[rand.Intn(len(chars))]
+	}
+	return string(b)
+}
+
+func newCell(cellType, source string, nb *Notebook) Cell {
 	cell := Cell{
 		CellType: cellType,
 		Source:   sourceToLines(source),
 		Metadata: json.RawMessage(`{}`),
+	}
+	// Assign cell ID for notebooks that support it (nbformat >= 4.5)
+	if nb.NBFormat > 4 || (nb.NBFormat == 4 && nb.NBFormatMinor >= 5) {
+		cell.ID = generateCellID()
 	}
 	if cellType == "code" {
 		cell.Outputs = json.RawMessage(`[]`)
@@ -164,55 +209,48 @@ func newCell(cellType, source string) Cell {
 	return cell
 }
 
-func addCell(nb *Notebook, in *input) error {
-	cellType := in.CellType
-	if cellType == "" {
-		cellType = "code"
+func replaceCell(nb *Notebook, in *input) error {
+	idx := findCellByID(nb.Cells, in.CellID)
+	if idx == -1 {
+		return fmt.Errorf("cell with ID %q not found in notebook", in.CellID)
 	}
-	nb.Cells = append(nb.Cells, newCell(cellType, in.Source))
-	return nil
-}
-
-func editCell(nb *Notebook, in *input) error {
-	if in.Index == nil {
-		return fmt.Errorf("\"index\" is required for edit_cell command")
+	nb.Cells[idx].Source = sourceToLines(in.NewSource)
+	// Reset execution count and outputs for code cells (matches TS)
+	if nb.Cells[idx].CellType == "code" {
+		nb.Cells[idx].ExecutionCount = nil
+		nb.Cells[idx].Outputs = json.RawMessage(`[]`)
 	}
-	idx := *in.Index
-	if idx < 0 || idx >= len(nb.Cells) {
-		return fmt.Errorf("cell index %d out of bounds (notebook has %d cells)", idx, len(nb.Cells))
+	// Update cell type if specified and different
+	if in.CellType != "" && in.CellType != nb.Cells[idx].CellType {
+		nb.Cells[idx].CellType = in.CellType
 	}
-	nb.Cells[idx].Source = sourceToLines(in.Source)
-	return nil
-}
-
-func deleteCell(nb *Notebook, in *input) error {
-	if in.Index == nil {
-		return fmt.Errorf("\"index\" is required for delete_cell command")
-	}
-	idx := *in.Index
-	if idx < 0 || idx >= len(nb.Cells) {
-		return fmt.Errorf("cell index %d out of bounds (notebook has %d cells)", idx, len(nb.Cells))
-	}
-	nb.Cells = append(nb.Cells[:idx], nb.Cells[idx+1:]...)
 	return nil
 }
 
 func insertCell(nb *Notebook, in *input) error {
-	if in.Index == nil {
-		return fmt.Errorf("\"index\" is required for insert_cell command")
+	cell := newCell(in.CellType, in.NewSource, nb)
+	if in.CellID == "" {
+		// Insert at beginning (index 0) when no cell_id specified
+		nb.Cells = append([]Cell{cell}, nb.Cells...)
+		return nil
 	}
-	idx := *in.Index
-	if idx < 0 || idx > len(nb.Cells) {
-		return fmt.Errorf("cell index %d out of bounds (notebook has %d cells)", idx, len(nb.Cells))
+	idx := findCellByID(nb.Cells, in.CellID)
+	if idx == -1 {
+		return fmt.Errorf("cell with ID %q not found in notebook", in.CellID)
 	}
-	cellType := in.CellType
-	if cellType == "" {
-		cellType = "code"
-	}
-	cell := newCell(cellType, in.Source)
-	// Insert at position
+	// Insert AFTER the found cell
+	insertIdx := idx + 1
 	nb.Cells = append(nb.Cells, Cell{}) // grow slice
-	copy(nb.Cells[idx+1:], nb.Cells[idx:])
-	nb.Cells[idx] = cell
+	copy(nb.Cells[insertIdx+1:], nb.Cells[insertIdx:])
+	nb.Cells[insertIdx] = cell
+	return nil
+}
+
+func deleteCell(nb *Notebook, in *input) error {
+	idx := findCellByID(nb.Cells, in.CellID)
+	if idx == -1 {
+		return fmt.Errorf("cell with ID %q not found in notebook", in.CellID)
+	}
+	nb.Cells = append(nb.Cells[:idx], nb.Cells[idx+1:]...)
 	return nil
 }
