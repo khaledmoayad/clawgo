@@ -152,6 +152,16 @@ func RunLoop(ctx context.Context, params *LoopParams) error {
 				streamingExecutor.Discard()
 			}
 
+			// Try draining staged context collapses before reactive compact
+			if params.Collapser != nil && params.Collapser.StagedCount() > 0 {
+				recovered, drained := params.Collapser.RecoverFromOverflow(state.Messages)
+				if drained {
+					state.Messages = recovered
+					state.SetTransition(SiteCollapseDrain)
+					continue
+				}
+			}
+
 			if !state.HasAttemptedReactiveCompact {
 				state.HasAttemptedReactiveCompact = true
 

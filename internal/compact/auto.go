@@ -105,6 +105,11 @@ func CheckAutoCompact(
 		return nil, consecutiveFailures, nil
 	}
 
+	// Snip old tool results before compacting to reduce what needs summarizing
+	if IsSnipRuntimeEnabled() {
+		params.Messages = SnipConversation(params.Messages, params.Model)
+	}
+
 	result, err := CompactConversation(ctx, params)
 	if err != nil {
 		return nil, consecutiveFailures + 1, err

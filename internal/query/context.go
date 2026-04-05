@@ -9,6 +9,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/khaledmoayad/clawgo/internal/api"
 	"github.com/khaledmoayad/clawgo/internal/commands"
+	"github.com/khaledmoayad/clawgo/internal/compact"
 	"github.com/khaledmoayad/clawgo/internal/cost"
 	"github.com/khaledmoayad/clawgo/internal/filestate"
 	"github.com/khaledmoayad/clawgo/internal/permissions"
@@ -85,6 +86,10 @@ type LoopParams struct {
 	// FileStateCache tracks file reads for read-before-edit enforcement.
 	// If nil, a default cache is created in toolUseContext().
 	FileStateCache *filestate.FileStateCache
+
+	// Collapser manages staged context collapses drained before reactive compact.
+	// If nil, context collapse is disabled.
+	Collapser *compact.ContextCollapser
 }
 
 // toolUseContext creates a ToolUseContext for tool execution.
