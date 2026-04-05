@@ -32,15 +32,15 @@ func EvaluateServerPolicy(name string, settings *config.Settings) PolicyDecision
 	}
 
 	// Rule 1: explicit deny list takes priority
-	for _, denied := range settings.DeniedMCPServers {
+	for _, denied := range settings.DeniedMCPServerNames {
 		if denied == name {
 			return PolicyDenied
 		}
 	}
 
 	// Rule 2: if an allow list is present, the server must appear in it
-	if len(settings.AllowedMCPServers) > 0 {
-		for _, allowed := range settings.AllowedMCPServers {
+	if len(settings.AllowedMCPServerNames) > 0 {
+		for _, allowed := range settings.AllowedMCPServerNames {
 			if allowed == name {
 				return PolicyAllowed
 			}

@@ -5,11 +5,9 @@ import (
 	"os"
 )
 
-// Config represents the global config stored at ~/.claude/.config.json.
-type Config struct {
-	HasCompletedOnboarding bool   `json:"hasCompletedOnboarding,omitempty"`
-	PrimaryAPIKey          string `json:"primaryApiKey,omitempty"`
-}
+// Config is a type alias for GlobalConfig for backward compatibility.
+// New code should use GlobalConfig directly.
+type Config = GlobalConfig
 
 // Credentials represents the credentials file at ~/.claude/.credentials.json.
 type Credentials struct {

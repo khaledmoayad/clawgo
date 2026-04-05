@@ -124,7 +124,7 @@ func TestEvaluateServerPolicyEmptySettings(t *testing.T) {
 
 func TestEvaluateServerPolicyDenyListMatch(t *testing.T) {
 	settings := &config.Settings{
-		DeniedMCPServers: []string{"blocked-server", "another-blocked"},
+		DeniedMCPServerNames: []string{"blocked-server", "another-blocked"},
 	}
 	assert.Equal(t, PolicyDenied, EvaluateServerPolicy("blocked-server", settings))
 	assert.Equal(t, PolicyDenied, EvaluateServerPolicy("another-blocked", settings))
@@ -133,7 +133,7 @@ func TestEvaluateServerPolicyDenyListMatch(t *testing.T) {
 
 func TestEvaluateServerPolicyAllowListRestriction(t *testing.T) {
 	settings := &config.Settings{
-		AllowedMCPServers: []string{"allowed-a", "allowed-b"},
+		AllowedMCPServerNames: []string{"allowed-a", "allowed-b"},
 	}
 	assert.Equal(t, PolicyAllowed, EvaluateServerPolicy("allowed-a", settings))
 	assert.Equal(t, PolicyAllowed, EvaluateServerPolicy("allowed-b", settings))
@@ -143,8 +143,8 @@ func TestEvaluateServerPolicyAllowListRestriction(t *testing.T) {
 func TestEvaluateServerPolicyDenyOverridesAllow(t *testing.T) {
 	// A server on both lists should be denied (deny list checked first)
 	settings := &config.Settings{
-		AllowedMCPServers: []string{"server-a"},
-		DeniedMCPServers:  []string{"server-a"},
+		AllowedMCPServerNames: []string{"server-a"},
+		DeniedMCPServerNames:  []string{"server-a"},
 	}
 	assert.Equal(t, PolicyDenied, EvaluateServerPolicy("server-a", settings))
 }
