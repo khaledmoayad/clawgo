@@ -454,3 +454,191 @@ func TestResolvePath(t *testing.T) {
 	assert.Equal(t, "/absolute/path.md", resolvePath("/absolute/path.md", "/base/dir", "/home/user"))
 	assert.Equal(t, "/base/dir/sub/file.md", resolvePath("sub/file.md", "/base/dir", "/home/user"))
 }
+
+// --- Frontmatter tests ---
+
+func TestParseFrontmatter_WithGlobs(t *testing.T) {
+	content := "---\nglobs: [\"*.go\", \"*.ts\"]\n---\n# Content here"
+	fm, remaining := ParseFrontmatter(content)
+
+	require.NotNil(t, fm)
+	assert.Equal(t, []string{"*.go", "*.ts"}, fm.Globs)
+	assert.Equal(t, "# Content here", remaining)
+}
+
+func TestParseFrontmatter_WithSingleGlob(t *testing.T) {
+	content := "---\nglobs: \"*.go\"\n---\nContent"
+	fm, remaining := ParseFrontmatter(content)
+
+	require.NotNil(t, fm)
+	// Single string value stored in Fields, not Globs
+	assert.Equal(t, "Content", remaining)
+}
+
+func TestParseFrontmatter_NoFrontmatter(t *testing.T) {
+	content := "# Just content\nNo frontmatter here"
+	fm, remaining := ParseFrontmatter(content)
+
+	assert.Nil(t, fm)
+	assert.Equal(t, content, remaining)
+}
+
+func TestParseFrontmatter_StripsFromContent(t *testing.T) {
+	content := "---\ndescription: A test rule\npaths: [\"src/**\"]\n---\n# Rule Title\nRule body text"
+	fm, remaining := ParseFrontmatter(content)
+
+	require.NotNil(t, fm)
+	assert.NotContains(t, remaining, "---")
+	assert.NotContains(t, remaining, "description:")
+	assert.Contains(t, remaining, "# Rule Title")
+	assert.Contains(t, remaining, "Rule body text")
+}
+
+func TestParseFrontmatter_MultiLineList(t *testing.T) {
+	content := "---\nglobs:\n  - \"*.go\"\n  - \"*.rs\"\n---\nContent"
+	fm, remaining := ParseFrontmatter(content)
+
+	require.NotNil(t, fm)
+	assert.Equal(t, []string{"*.go", "*.rs"}, fm.Globs)
+	assert.Equal(t, "Content", remaining)
+}
+
+func TestParseFrontmatter_EmptyFrontmatter(t *testing.T) {
+	content := "---\n---\nContent"
+	fm, remaining := ParseFrontmatter(content)
+
+	require.NotNil(t, fm)
+	assert.Equal(t, "Content", remaining)
+}
+
+func TestParseFrontmatter_FieldValues(t *testing.T) {
+	content := "---\ndescription: My rule\nmodel: haiku\n---\nContent"
+	fm, remaining := ParseFrontmatter(content)
+
+	require.NotNil(t, fm)
+	assert.Equal(t, "My rule", fm.Fields["description"])
+	assert.Equal(t, "haiku", fm.Fields["model"])
+	assert.Equal(t, "Content", remaining)
+}
+
+func TestMatchesFrontmatterGlobs(t *testing.T) {
+	assert.True(t, MatchesFrontmatterGlobs([]string{"*.go"}, "main.go"))
+	assert.True(t, MatchesFrontmatterGlobs([]string{"*.ts", "*.go"}, "app.ts"))
+	assert.False(t, MatchesFrontmatterGlobs([]string{"*.go"}, "main.py"))
+	assert.False(t, MatchesFrontmatterGlobs([]string{}, "main.go"))
+}
+
+// --- Integration tests: LoadMemoryFiles with includes ---
+
+func TestLoadMemoryFiles_IncludesResolvedDuringLoad(t *testing.T) {
+	tmpDir := t.TempDir()
+	homeDir := t.TempDir()
+
+	// Create CLAUDE.md with an @include
+	includeFile := filepath.Join(tmpDir, "extra.md")
+	require.NoError(t, os.WriteFile(includeFile, []byte("# Extra Content"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "CLAUDE.md"), []byte("# Main\n@./extra.md"), 0644))
+
+	files, err := LoadMemoryFiles(tmpDir, homeDir)
+	require.NoError(t, err)
+
+	// Should have at least 2 files: the included extra.md and the main CLAUDE.md
+	require.GreaterOrEqual(t, len(files), 2)
+
+	// Find the included file and the main file
+	var foundExtra, foundMain bool
+	var extraIdx, mainIdx int
+	for i, f := range files {
+		if filepath.Base(f.Path) == "extra.md" {
+			foundExtra = true
+			extraIdx = i
+			assert.Equal(t, "# Extra Content", f.Content)
+		}
+		if filepath.Base(f.Path) == "CLAUDE.md" && f.Type == MemoryProject {
+			foundMain = true
+			mainIdx = i
+		}
+	}
+
+	assert.True(t, foundExtra, "should find included extra.md")
+	assert.True(t, foundMain, "should find main CLAUDE.md")
+	assert.Less(t, extraIdx, mainIdx, "included files should appear before the including file")
+}
+
+func TestLoadMemoryFiles_FrontmatterStrippedFromContent(t *testing.T) {
+	tmpDir := t.TempDir()
+	homeDir := t.TempDir()
+
+	content := "---\nglobs: [\"*.go\"]\ndescription: Go rules\n---\n# Go Rules\nAlways use gofmt"
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "CLAUDE.md"), []byte(content), 0644))
+
+	files, err := LoadMemoryFiles(tmpDir, homeDir)
+	require.NoError(t, err)
+
+	var found bool
+	for _, f := range files {
+		if f.Type == MemoryProject && filepath.Base(f.Path) == "CLAUDE.md" {
+			found = true
+			// Content should NOT contain frontmatter
+			assert.NotContains(t, f.Content, "---")
+			assert.NotContains(t, f.Content, "globs:")
+			assert.Contains(t, f.Content, "# Go Rules")
+			assert.Contains(t, f.Content, "Always use gofmt")
+			// Frontmatter should be parsed
+			require.NotNil(t, f.Frontmatter)
+			assert.Equal(t, []string{"*.go"}, f.Frontmatter.Globs)
+		}
+	}
+	assert.True(t, found)
+}
+
+func TestLoadMemoryFiles_IncludesOrderCorrect(t *testing.T) {
+	tmpDir := t.TempDir()
+	homeDir := t.TempDir()
+
+	// Create a chain: CLAUDE.md -> inc1.md -> inc2.md
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "inc2.md"), []byte("# Inc2"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "inc1.md"), []byte("# Inc1\n@./inc2.md"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "CLAUDE.md"), []byte("# Main\n@./inc1.md"), 0644))
+
+	files, err := LoadMemoryFiles(tmpDir, homeDir)
+	require.NoError(t, err)
+
+	// Find project files in order
+	var projectContents []string
+	for _, f := range files {
+		if f.Type == MemoryProject {
+			projectContents = append(projectContents, f.Content)
+		}
+	}
+
+	// inc2 (deepest include) should come first, then inc1, then CLAUDE.md
+	require.GreaterOrEqual(t, len(projectContents), 3)
+	assert.Equal(t, "# Inc2", projectContents[0])
+	assert.Contains(t, projectContents[1], "# Inc1")
+	assert.Contains(t, projectContents[2], "# Main")
+}
+
+func TestLoadMemoryFiles_CrossFileCircularPrevention(t *testing.T) {
+	tmpDir := t.TempDir()
+	homeDir := t.TempDir()
+
+	// Create two files that include each other
+	// CLAUDE.md -> shared.md, CLAUDE.local.md -> shared.md
+	// shared.md should only appear once
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "shared.md"), []byte("# Shared"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "CLAUDE.md"), []byte("# Project\n@./shared.md"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "CLAUDE.local.md"), []byte("# Local\n@./shared.md"), 0644))
+
+	files, err := LoadMemoryFiles(tmpDir, homeDir)
+	require.NoError(t, err)
+
+	// Count how many times shared.md appears
+	sharedCount := 0
+	for _, f := range files {
+		if filepath.Base(f.Path) == "shared.md" {
+			sharedCount++
+		}
+	}
+	assert.Equal(t, 1, sharedCount, "shared.md should only appear once due to cross-file dedup")
+}

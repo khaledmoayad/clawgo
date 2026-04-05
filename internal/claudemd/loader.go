@@ -41,18 +41,24 @@ type MemoryFile struct {
 // LoadMemoryFiles discovers and loads CLAUDE.md files starting from cwd,
 // walking upward through parent directories. Files are returned in priority
 // order: managed -> user -> project (root-to-CWD) -> local.
+//
+// For each loaded file:
+//   - Frontmatter (--- delimited YAML) is parsed and stripped from content
+//   - @include directives are resolved, and included files appear BEFORE the
+//     including file in the result slice
+//   - Circular references across all files are prevented via a shared seen set
 func LoadMemoryFiles(cwd string, homeDir string) ([]MemoryFile, error) {
 	var files []MemoryFile
 	seen := make(map[string]bool)
 
 	// Step 1: Managed config (/etc/claude-code/CLAUDE.md)
-	tryLoad(&files, seen, "/etc/claude-code/CLAUDE.md", MemoryManaged)
+	loadWithIncludes(&files, seen, "/etc/claude-code/CLAUDE.md", MemoryManaged, homeDir)
 
 	// Step 2: User config (~/.claude/CLAUDE.md)
-	tryLoad(&files, seen, filepath.Join(homeDir, ".claude", "CLAUDE.md"), MemoryUser)
+	loadWithIncludes(&files, seen, filepath.Join(homeDir, ".claude", "CLAUDE.md"), MemoryUser, homeDir)
 
 	// Step 2b: User rules (~/.claude/rules/*.md)
-	loadRulesDir(&files, seen, filepath.Join(homeDir, ".claude", "rules"), MemoryUser)
+	loadRulesDirWithIncludes(&files, seen, filepath.Join(homeDir, ".claude", "rules"), MemoryUser, homeDir)
 
 	// Step 3: Collect directories from CWD upward
 	dirs := collectDirsUpward(cwd)
@@ -67,23 +73,64 @@ func LoadMemoryFiles(cwd string, homeDir string) ([]MemoryFile, error) {
 
 	for _, dir := range reversed {
 		// Try dir/CLAUDE.md as Project
-		tryLoad(&files, seen, filepath.Join(dir, "CLAUDE.md"), MemoryProject)
+		loadWithIncludes(&files, seen, filepath.Join(dir, "CLAUDE.md"), MemoryProject, homeDir)
 
 		// Try dir/.claude/CLAUDE.md as Project
-		tryLoad(&files, seen, filepath.Join(dir, ".claude", "CLAUDE.md"), MemoryProject)
+		loadWithIncludes(&files, seen, filepath.Join(dir, ".claude", "CLAUDE.md"), MemoryProject, homeDir)
 
 		// Load dir/.claude/rules/*.md as Project
-		loadRulesDir(&files, seen, filepath.Join(dir, ".claude", "rules"), MemoryProject)
+		loadRulesDirWithIncludes(&files, seen, filepath.Join(dir, ".claude", "rules"), MemoryProject, homeDir)
 
 		// Try dir/CLAUDE.local.md as Local
-		tryLoad(&files, seen, filepath.Join(dir, "CLAUDE.local.md"), MemoryLocal)
+		loadWithIncludes(&files, seen, filepath.Join(dir, "CLAUDE.local.md"), MemoryLocal, homeDir)
 	}
 
 	return files, nil
 }
 
+// loadWithIncludes reads a file, parses frontmatter, resolves @include
+// directives, and appends all results to the files slice. Included files
+// appear BEFORE the including file.
+func loadWithIncludes(files *[]MemoryFile, seen map[string]bool, path string, typ MemoryType, homeDir string) {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return
+	}
+
+	if seen[absPath] {
+		return
+	}
+
+	data, err := os.ReadFile(absPath)
+	if err != nil {
+		return // file doesn't exist or can't be read -- not an error
+	}
+
+	seen[absPath] = true
+	content := string(data)
+
+	// Parse and strip frontmatter
+	fm, strippedContent := ParseFrontmatter(content)
+
+	// Resolve @include directives
+	baseDir := filepath.Dir(absPath)
+	included, cleanedContent, _ := resolveIncludes(strippedContent, baseDir, homeDir, seen, 0, typ)
+
+	// Included files appear BEFORE the including file
+	*files = append(*files, included...)
+
+	// Append the main file with frontmatter stripped and includes cleaned
+	*files = append(*files, MemoryFile{
+		Path:        absPath,
+		Type:        typ,
+		Content:     cleanedContent,
+		Frontmatter: fm,
+	})
+}
+
 // tryLoad attempts to read a file and append it to the files slice.
 // If the file doesn't exist or is already seen, it's silently skipped.
+// Frontmatter is parsed and stripped from the content.
 func tryLoad(files *[]MemoryFile, seen map[string]bool, path string, typ MemoryType) {
 	absPath, err := filepath.Abs(path)
 	if err != nil {
@@ -100,11 +147,29 @@ func tryLoad(files *[]MemoryFile, seen map[string]bool, path string, typ MemoryT
 	}
 
 	seen[absPath] = true
+
+	content := string(data)
+	fm, strippedContent := ParseFrontmatter(content)
+
 	*files = append(*files, MemoryFile{
-		Path:    absPath,
-		Type:    typ,
-		Content: string(data),
+		Path:        absPath,
+		Type:        typ,
+		Content:     strippedContent,
+		Frontmatter: fm,
 	})
+}
+
+// loadRulesDirWithIncludes loads all *.md files from a directory with include resolution.
+func loadRulesDirWithIncludes(files *[]MemoryFile, seen map[string]bool, dir string, typ MemoryType, homeDir string) {
+	matches, err := filepath.Glob(filepath.Join(dir, "*.md"))
+	if err != nil || len(matches) == 0 {
+		return
+	}
+
+	sort.Strings(matches)
+	for _, m := range matches {
+		loadWithIncludes(files, seen, m, typ, homeDir)
+	}
 }
 
 // loadRulesDir loads all *.md files from a directory, sorted alphabetically.
