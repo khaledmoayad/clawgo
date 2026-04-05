@@ -2,12 +2,19 @@ package read
 
 // toolDescription is the human-readable description sent to the Anthropic API.
 const toolDescription = `Reads a file from the local filesystem. You can access any file directly by using this tool.
+Assume this tool is able to read all files on the machine. If the User provides a path to a file assume that path is valid. It is okay to read a file that does not exist; an error will be returned.
 
 Usage:
 - The file_path parameter must be an absolute path, not a relative path
 - By default, it reads up to 2000 lines starting from the beginning of the file
-- When you already know which part of the file you need, only read that part using offset and limit
-- Results are returned using cat -n format, with line numbers starting at 1`
+- When you already know which part of the file you need, only read that part. This can be important for larger files.
+- Results are returned using cat -n format, with line numbers starting at 1
+- This tool allows Claude Code to read images (eg PNG, JPG, etc). When reading an image file the contents are presented visually as Claude Code is a multimodal LLM.
+- This tool can read PDF files (.pdf). For large PDFs (more than 10 pages), you MUST provide the pages parameter to read specific page ranges (e.g., pages: "1-5"). Reading a large PDF without the pages parameter will fail. Maximum 20 pages per request.
+- This tool can read Jupyter notebooks (.ipynb files) and returns all cells with their outputs, combining code, text, and visualizations.
+- This tool can only read files, not directories. To read a directory, use an ls command via the Bash tool.
+- You will regularly be asked to read screenshots. If the user provides a path to a screenshot, ALWAYS use this tool to view the file at the path. This tool will work with all temporary file paths.
+- If you read a file that exists but has empty contents you will receive a system reminder warning in place of file contents.`
 
 // inputSchemaJSON is the JSON Schema for ReadTool input.
 const inputSchemaJSON = `{
@@ -19,13 +26,17 @@ const inputSchemaJSON = `{
         },
         "offset": {
             "type": "integer",
-            "description": "The line number to start reading from (0-indexed). Only provide if the file is too large to read at once",
+            "description": "The line number to start reading from. Only provide if the file is too large to read at once",
             "minimum": 0
         },
         "limit": {
             "type": "integer",
-            "description": "The number of lines to read. Only provide if the file is too large to read at once",
+            "description": "The number of lines to read. Only provide if the file is too large to read at once.",
             "exclusiveMinimum": 0
+        },
+        "pages": {
+            "type": "string",
+            "description": "Page range for PDF files (e.g., \"1-5\", \"3\", \"10-20\"). Only applicable to PDF files. Maximum 20 pages per request."
         }
     },
     "required": ["file_path"]

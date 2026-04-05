@@ -1,10 +1,33 @@
 package sendmessage
 
 // toolDescription is the human-readable description sent to the Anthropic API.
-const toolDescription = `Sends a follow-up message to a running worker agent.
+const toolDescription = `
+# SendMessage
 
-Used to continue a worker with additional instructions, corrections, or new tasks.
-The worker receives the message and resumes its query loop with the new context.`
+Send a message to another agent.
+
+` + "```json" + `
+{"to": "researcher", "summary": "assign task 1", "message": "start on task #1"}
+` + "```" + `
+
+| ` + "`to`" + ` | |
+|---|---|
+| ` + "`\"researcher\"`" + ` | Teammate by name |
+| ` + "`\"*\"`" + ` | Broadcast to all teammates — expensive (linear in team size), use only when everyone genuinely needs it |
+
+Your plain text output is NOT visible to other agents — to communicate, you MUST call this tool. Messages from teammates are delivered automatically; you don't check an inbox. Refer to teammates by name, never by UUID. When relaying, don't quote the original — it's already rendered to the user.
+
+## Protocol responses (legacy)
+
+If you receive a JSON message with ` + "`type: \"shutdown_request\"`" + ` or ` + "`type: \"plan_approval_request\"`" + `, respond with the matching ` + "`_response`" + ` type — echo the ` + "`request_id`" + `, set ` + "`approve`" + ` true/false:
+
+` + "```json" + `
+{"to": "team-lead", "message": {"type": "shutdown_response", "request_id": "...", "approve": true}}
+{"to": "researcher", "message": {"type": "plan_approval_response", "request_id": "...", "approve": false, "feedback": "add error handling"}}
+` + "```" + `
+
+Approving shutdown terminates your process. Rejecting plan sends the teammate back to revise. Don't originate ` + "`shutdown_request`" + ` unless asked. Don't send structured JSON status messages — use TaskUpdate.
+`
 
 // inputSchemaJSON is the JSON Schema for SendMessageTool input.
 const inputSchemaJSON = `{
@@ -12,11 +35,14 @@ const inputSchemaJSON = `{
     "properties": {
         "to": {
             "type": "string",
-            "description": "The agent ID of the worker to send the message to (from Agent tool launch result)"
+            "description": "The recipient: a teammate name, \"*\" for broadcast, or a session address"
         },
         "message": {
+            "description": "The message content to send"
+        },
+        "summary": {
             "type": "string",
-            "description": "The message content to send to the worker"
+            "description": "Short summary of the message purpose"
         }
     },
     "required": ["to", "message"]

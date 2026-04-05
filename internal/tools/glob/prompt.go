@@ -1,11 +1,10 @@
 package glob
 
-const toolDescription = `Fast file pattern matching tool that works with any codebase size.
-
-Usage:
+const toolDescription = `- Fast file pattern matching tool that works with any codebase size
 - Supports glob patterns like "**/*.js" or "src/**/*.ts"
 - Returns matching file paths sorted by modification time
-- Use this tool when you need to find files by name patterns`
+- Use this tool when you need to find files by name patterns
+- When you are doing an open ended search that may require multiple rounds of globbing and grepping, use the Agent tool instead`
 
 const inputSchemaJSON = `{
   "type": "object",
@@ -16,7 +15,7 @@ const inputSchemaJSON = `{
     },
     "path": {
       "type": "string",
-      "description": "The directory to search in (defaults to working directory)"
+      "description": "The directory to search in. If not specified, the current working directory will be used. IMPORTANT: Omit this field to use the default directory. DO NOT enter \"undefined\" or \"null\" - simply omit it for the default behavior. Must be a valid directory path if provided."
     }
   },
   "required": ["pattern"]

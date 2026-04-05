@@ -1,34 +1,35 @@
 package notebookedit
 
 // toolDescription is the human-readable description sent to the Anthropic API.
-const toolDescription = `Edits Jupyter notebook (.ipynb) files. Can add, edit, or delete cells. Supports code and markdown cell types.`
+const toolDescription = `Completely replaces the contents of a specific cell in a Jupyter notebook (.ipynb file) with new source. Jupyter notebooks are interactive documents that combine code, text, and visualizations, commonly used for data analysis and scientific computing. The notebook_path parameter must be an absolute path, not a relative path. The cell_number is 0-indexed. Use edit_mode=insert to add a new cell at the index specified by cell_number. Use edit_mode=delete to delete the cell at the index specified by cell_number.`
 
 // inputSchemaJSON is the JSON Schema for NotebookEditTool input.
 const inputSchemaJSON = `{
     "type": "object",
     "properties": {
-        "path": {
+        "notebook_path": {
             "type": "string",
-            "description": "Path to the .ipynb notebook file"
+            "description": "The absolute path to the Jupyter notebook file"
         },
-        "command": {
+        "cell_number": {
+            "type": "integer",
+            "description": "The 0-indexed cell number to edit, insert at, or delete",
+            "minimum": 0
+        },
+        "new_source": {
             "type": "string",
-            "description": "The operation to perform on the notebook",
-            "enum": ["add_cell", "edit_cell", "delete_cell", "insert_cell"]
+            "description": "The new source content for the cell"
         },
         "cell_type": {
             "type": "string",
-            "description": "Type of cell (required for add_cell and insert_cell)",
+            "description": "Type of cell (for insert mode)",
             "enum": ["code", "markdown"]
         },
-        "index": {
-            "type": "integer",
-            "description": "Cell index (required for edit_cell, delete_cell, insert_cell)"
-        },
-        "source": {
+        "edit_mode": {
             "type": "string",
-            "description": "Cell content (required for add_cell, edit_cell, insert_cell)"
+            "description": "The edit operation to perform",
+            "enum": ["replace", "insert", "delete"]
         }
     },
-    "required": ["path", "command"]
+    "required": ["notebook_path", "cell_number", "new_source"]
 }`
