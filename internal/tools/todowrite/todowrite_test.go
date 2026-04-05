@@ -38,17 +38,15 @@ func TestTodoWriteTool_Call_CreateTodos(t *testing.T) {
 
 	input := json.RawMessage(`{
 		"todos": [
-			{"id": "1", "content": "Write tests", "status": "pending", "priority": "high"},
-			{"id": "2", "content": "Implement feature", "status": "in_progress"}
+			{"content": "Write tests", "status": "pending", "activeForm": "Writing tests"},
+			{"content": "Implement feature", "status": "in_progress", "activeForm": "Implementing feature"}
 		]
 	}`)
 
 	result, err := tool.Call(ctx, input, toolCtx)
 	require.NoError(t, err)
 	assert.False(t, result.IsError)
-	assert.Contains(t, result.Content[0].Text, "2 added")
-	assert.Contains(t, result.Content[0].Text, "0 updated")
-	assert.Contains(t, result.Content[0].Text, "2 total")
+	assert.Contains(t, result.Content[0].Text, "modified successfully")
 
 	// Verify file was created
 	todosPath := filepath.Join(tmpDir, ".claude", "todos.json")
@@ -59,9 +57,11 @@ func TestTodoWriteTool_Call_CreateTodos(t *testing.T) {
 	err = json.Unmarshal(data, &todos)
 	require.NoError(t, err)
 	assert.Len(t, todos, 2)
+	assert.Equal(t, "Write tests", todos[0].Content)
+	assert.Equal(t, "Writing tests", todos[0].ActiveForm)
 }
 
-func TestTodoWriteTool_Call_UpdateTodos(t *testing.T) {
+func TestTodoWriteTool_Call_ReplacesFullList(t *testing.T) {
 	tmpDir := t.TempDir()
 	tool := New()
 	ctx := context.Background()
@@ -73,29 +73,25 @@ func TestTodoWriteTool_Call_UpdateTodos(t *testing.T) {
 	// Create initial todos
 	input1 := json.RawMessage(`{
 		"todos": [
-			{"id": "1", "content": "Write tests", "status": "pending"},
-			{"id": "2", "content": "Implement feature", "status": "pending"}
+			{"content": "Write tests", "status": "pending", "activeForm": "Writing tests"},
+			{"content": "Implement feature", "status": "pending", "activeForm": "Implementing feature"}
 		]
 	}`)
 	result, err := tool.Call(ctx, input1, toolCtx)
 	require.NoError(t, err)
 	assert.False(t, result.IsError)
 
-	// Update one todo
+	// Replace the full list (not merge)
 	input2 := json.RawMessage(`{
 		"todos": [
-			{"id": "1", "content": "Write tests", "status": "done"},
-			{"id": "3", "content": "Deploy", "status": "pending"}
+			{"content": "Deploy", "status": "pending", "activeForm": "Deploying"}
 		]
 	}`)
 	result, err = tool.Call(ctx, input2, toolCtx)
 	require.NoError(t, err)
 	assert.False(t, result.IsError)
-	assert.Contains(t, result.Content[0].Text, "1 added")
-	assert.Contains(t, result.Content[0].Text, "1 updated")
-	assert.Contains(t, result.Content[0].Text, "3 total")
 
-	// Verify file content
+	// Verify file content -- should only have 1 item (full replacement)
 	todosPath := filepath.Join(tmpDir, ".claude", "todos.json")
 	data, err := os.ReadFile(todosPath)
 	require.NoError(t, err)
@@ -103,19 +99,53 @@ func TestTodoWriteTool_Call_UpdateTodos(t *testing.T) {
 	var todos []TodoItem
 	err = json.Unmarshal(data, &todos)
 	require.NoError(t, err)
-	assert.Len(t, todos, 3)
+	assert.Len(t, todos, 1)
+	assert.Equal(t, "Deploy", todos[0].Content)
 }
 
-func TestTodoWriteTool_Call_EmptyTodos(t *testing.T) {
+func TestTodoWriteTool_Call_AllCompletedClearsList(t *testing.T) {
+	tmpDir := t.TempDir()
 	tool := New()
 	ctx := context.Background()
-	toolCtx := &tools.ToolUseContext{WorkingDir: "/tmp", ProjectRoot: "/tmp"}
+	toolCtx := &tools.ToolUseContext{
+		WorkingDir:  tmpDir,
+		ProjectRoot: tmpDir,
+	}
 
+	// Mark all as completed
+	input := json.RawMessage(`{
+		"todos": [
+			{"content": "Write tests", "status": "completed", "activeForm": "Writing tests"},
+			{"content": "Deploy", "status": "completed", "activeForm": "Deploying"}
+		]
+	}`)
+	result, err := tool.Call(ctx, input, toolCtx)
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+
+	// Verify file -- should be empty list
+	todosPath := filepath.Join(tmpDir, ".claude", "todos.json")
+	data, err := os.ReadFile(todosPath)
+	require.NoError(t, err)
+
+	var todos []TodoItem
+	err = json.Unmarshal(data, &todos)
+	require.NoError(t, err)
+	assert.Len(t, todos, 0)
+}
+
+func TestTodoWriteTool_Call_EmptyTodosAllowed(t *testing.T) {
+	tmpDir := t.TempDir()
+	tool := New()
+	ctx := context.Background()
+	toolCtx := &tools.ToolUseContext{WorkingDir: tmpDir, ProjectRoot: tmpDir}
+
+	// Empty array is a valid "clear all" operation
 	input := json.RawMessage(`{"todos": []}`)
 	result, err := tool.Call(ctx, input, toolCtx)
 	require.NoError(t, err)
-	assert.True(t, result.IsError)
-	assert.Contains(t, result.Content[0].Text, "todos")
+	// Empty array writes an empty file -- this is valid
+	assert.False(t, result.IsError)
 }
 
 func TestTodoWriteTool_Call_InvalidStatus(t *testing.T) {
@@ -124,26 +154,12 @@ func TestTodoWriteTool_Call_InvalidStatus(t *testing.T) {
 	toolCtx := &tools.ToolUseContext{WorkingDir: "/tmp", ProjectRoot: "/tmp"}
 
 	input := json.RawMessage(`{
-		"todos": [{"id": "1", "content": "Test", "status": "invalid"}]
+		"todos": [{"content": "Test", "status": "done", "activeForm": "Testing"}]
 	}`)
 	result, err := tool.Call(ctx, input, toolCtx)
 	require.NoError(t, err)
 	assert.True(t, result.IsError)
 	assert.Contains(t, result.Content[0].Text, "invalid status")
-}
-
-func TestTodoWriteTool_Call_MissingID(t *testing.T) {
-	tool := New()
-	ctx := context.Background()
-	toolCtx := &tools.ToolUseContext{WorkingDir: "/tmp", ProjectRoot: "/tmp"}
-
-	input := json.RawMessage(`{
-		"todos": [{"id": "", "content": "Test", "status": "pending"}]
-	}`)
-	result, err := tool.Call(ctx, input, toolCtx)
-	require.NoError(t, err)
-	assert.True(t, result.IsError)
-	assert.Contains(t, result.Content[0].Text, "id is required")
 }
 
 func TestTodoWriteTool_Call_MissingContent(t *testing.T) {
@@ -152,10 +168,42 @@ func TestTodoWriteTool_Call_MissingContent(t *testing.T) {
 	toolCtx := &tools.ToolUseContext{WorkingDir: "/tmp", ProjectRoot: "/tmp"}
 
 	input := json.RawMessage(`{
-		"todos": [{"id": "1", "content": "", "status": "pending"}]
+		"todos": [{"content": "", "status": "pending", "activeForm": "Testing"}]
 	}`)
 	result, err := tool.Call(ctx, input, toolCtx)
 	require.NoError(t, err)
 	assert.True(t, result.IsError)
 	assert.Contains(t, result.Content[0].Text, "content is required")
+}
+
+func TestTodoWriteTool_Call_MissingActiveForm(t *testing.T) {
+	tool := New()
+	ctx := context.Background()
+	toolCtx := &tools.ToolUseContext{WorkingDir: "/tmp", ProjectRoot: "/tmp"}
+
+	input := json.RawMessage(`{
+		"todos": [{"content": "Test", "status": "pending", "activeForm": ""}]
+	}`)
+	result, err := tool.Call(ctx, input, toolCtx)
+	require.NoError(t, err)
+	assert.True(t, result.IsError)
+	assert.Contains(t, result.Content[0].Text, "activeForm is required")
+}
+
+func TestTodoWriteTool_Call_StatusCompleted(t *testing.T) {
+	// Verify "completed" is accepted (not "done")
+	tmpDir := t.TempDir()
+	tool := New()
+	ctx := context.Background()
+	toolCtx := &tools.ToolUseContext{WorkingDir: tmpDir, ProjectRoot: tmpDir}
+
+	input := json.RawMessage(`{
+		"todos": [
+			{"content": "Test", "status": "pending", "activeForm": "Testing"},
+			{"content": "Done task", "status": "completed", "activeForm": "Done testing"}
+		]
+	}`)
+	result, err := tool.Call(ctx, input, toolCtx)
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
 }

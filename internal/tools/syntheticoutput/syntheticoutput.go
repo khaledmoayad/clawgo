@@ -1,48 +1,62 @@
-// Package syntheticoutput implements the SyntheticOutput tool for injecting
-// system-generated tool outputs into the conversation.
+// Package syntheticoutput implements the StructuredOutput tool for returning
+// structured JSON responses. The tool accepts any JSON object as input and
+// validates it against a user-provided JSON schema at runtime.
 package syntheticoutput
 
 import (
 	"context"
 	"encoding/json"
-	"strings"
 
 	"github.com/khaledmoayad/clawgo/internal/permissions"
 	"github.com/khaledmoayad/clawgo/internal/tools"
 )
 
-type input struct {
-	Content string `json:"content"`
-	Format  string `json:"format"`
+// SyntheticOutputTool returns structured JSON output validated against a dynamic schema.
+type SyntheticOutputTool struct {
+	// JSONSchema is the optional user-provided JSON schema for runtime validation.
+	// When nil, any JSON object is accepted.
+	JSONSchema json.RawMessage
 }
 
-// SyntheticOutputTool returns content directly as a tool result.
-type SyntheticOutputTool struct{}
-
-// New creates a new SyntheticOutputTool.
+// New creates a new SyntheticOutputTool without a validation schema.
 func New() *SyntheticOutputTool { return &SyntheticOutputTool{} }
 
-func (t *SyntheticOutputTool) Name() string                { return "StructuredOutput" }
-func (t *SyntheticOutputTool) Description() string          { return toolDescription }
-func (t *SyntheticOutputTool) IsReadOnly() bool             { return true }
-func (t *SyntheticOutputTool) InputSchema() json.RawMessage { return json.RawMessage(inputSchemaJSON) }
+// NewWithSchema creates a SyntheticOutputTool that validates input against the given JSON schema.
+func NewWithSchema(schema json.RawMessage) *SyntheticOutputTool {
+	return &SyntheticOutputTool{JSONSchema: schema}
+}
 
-// IsConcurrencySafe returns true because synthetic output is a pure pass-through.
+func (t *SyntheticOutputTool) Name() string       { return "StructuredOutput" }
+func (t *SyntheticOutputTool) Description() string { return toolDescription }
+func (t *SyntheticOutputTool) IsReadOnly() bool    { return true }
+
+// InputSchema returns the dynamic JSON schema if set, otherwise the default permissive schema.
+func (t *SyntheticOutputTool) InputSchema() json.RawMessage {
+	if len(t.JSONSchema) > 0 {
+		return t.JSONSchema
+	}
+	return json.RawMessage(inputSchemaJSON)
+}
+
+// IsConcurrencySafe returns true because structured output is a pure pass-through.
 func (t *SyntheticOutputTool) IsConcurrencySafe(_ json.RawMessage) bool { return true }
 
-func (t *SyntheticOutputTool) CheckPermissions(_ context.Context, _ json.RawMessage, permCtx *permissions.PermissionContext) (permissions.PermissionResult, error) {
-	return permissions.CheckPermission("StructuredOutput", true, permCtx), nil
+func (t *SyntheticOutputTool) CheckPermissions(_ context.Context, _ json.RawMessage, _ *permissions.PermissionContext) (permissions.PermissionResult, error) {
+	// Always allow -- this tool just returns data.
+	return permissions.Allow, nil
 }
 
 func (t *SyntheticOutputTool) Call(_ context.Context, inp json.RawMessage, _ *tools.ToolUseContext) (*tools.ToolResult, error) {
-	var in input
-	if err := tools.ValidateInput(inp, &in); err != nil {
-		return tools.ErrorResult(err.Error()), nil
-	}
-	if strings.TrimSpace(in.Content) == "" {
-		return tools.ErrorResult("required field \"content\" is missing or empty"), nil
+	// Validate that input is valid JSON (the raw message is the structured output itself).
+	var parsed map[string]interface{}
+	if err := json.Unmarshal(inp, &parsed); err != nil {
+		return tools.ErrorResult("structured output must be a valid JSON object: " + err.Error()), nil
 	}
 
-	// Return the content directly as a tool result
-	return tools.TextResult(in.Content), nil
+	return &tools.ToolResult{
+		Content: []tools.ContentBlock{{Type: "text", Text: "Structured output provided successfully"}},
+		Metadata: map[string]any{
+			"structured_output": parsed,
+		},
+	}, nil
 }

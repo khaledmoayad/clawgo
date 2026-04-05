@@ -1,7 +1,7 @@
 package todowrite
 
 // toolDescription is the human-readable description sent to the Anthropic API.
-const toolDescription = `Use this tool to create and manage a todo list for tracking tasks during complex workflows. Todos are persisted to .claude/todos.json in the project root. Each todo has an id, content, status (pending/in_progress/done), and priority (high/medium/low).`
+const toolDescription = `Use this tool to create and manage a todo list for tracking tasks during complex workflows. Each call REPLACES the full todo list. Each item has content, status (pending/in_progress/completed), and activeForm (the currently active phrasing of the task).`
 
 // inputSchemaJSON is the JSON Schema for TodoWriteTool input.
 const inputSchemaJSON = `{
@@ -9,30 +9,25 @@ const inputSchemaJSON = `{
     "properties": {
         "todos": {
             "type": "array",
-            "description": "Array of todo items to create or update",
+            "description": "The complete updated todo list (replaces any existing list)",
             "items": {
                 "type": "object",
                 "properties": {
-                    "id": {
-                        "type": "string",
-                        "description": "Unique identifier for the todo"
-                    },
                     "content": {
                         "type": "string",
                         "description": "Description of the todo task"
                     },
                     "status": {
                         "type": "string",
-                        "enum": ["pending", "in_progress", "done"],
+                        "enum": ["pending", "in_progress", "completed"],
                         "description": "Current status of the todo"
                     },
-                    "priority": {
+                    "activeForm": {
                         "type": "string",
-                        "enum": ["high", "medium", "low"],
-                        "description": "Priority level"
+                        "description": "The currently active phrasing of this task"
                     }
                 },
-                "required": ["id", "content", "status"]
+                "required": ["content", "status", "activeForm"]
             }
         }
     },

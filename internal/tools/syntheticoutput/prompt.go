@@ -1,23 +1,12 @@
 package syntheticoutput
 
 // toolDescription is the human-readable description sent to the Anthropic API.
-const toolDescription = `Returns content directly as a tool result.
+const toolDescription = `Return structured output in the requested format. You MUST call this tool exactly once at the end of your response to provide the structured output.`
 
-Used by the system to inject synthetic tool outputs into the conversation. Supports text, JSON, and markdown formats.`
-
-// inputSchemaJSON is the JSON Schema for SyntheticOutputTool input.
+// inputSchemaJSON is the JSON Schema for StructuredOutput tool input.
+// The schema accepts any JSON object -- the actual schema is dynamic and
+// validated at runtime against the user-provided --json-schema flag.
 const inputSchemaJSON = `{
     "type": "object",
-    "properties": {
-        "content": {
-            "type": "string",
-            "description": "The content to return as the tool result"
-        },
-        "format": {
-            "type": "string",
-            "enum": ["text", "json", "markdown"],
-            "description": "The format of the content (default: text)"
-        }
-    },
-    "required": ["content"]
+    "additionalProperties": true
 }`

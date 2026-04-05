@@ -7,6 +7,7 @@ import (
 	"context"
 
 	"github.com/khaledmoayad/clawgo/internal/permissions"
+	"github.com/khaledmoayad/clawgo/internal/tools/tasks"
 )
 
 // PermissionResult is an alias for permissions.PermissionResult,
@@ -32,6 +33,7 @@ type ToolUseContext struct {
 	SessionID   string
 	AbortCtx    context.Context
 	PermCtx     *permissions.PermissionContext
+	TaskStore   *tasks.Store
 }
 
 // ContentBlock for tool results (text or image content).

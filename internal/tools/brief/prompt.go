@@ -1,16 +1,28 @@
 package brief
 
 // toolDescription is the human-readable description sent to the Anthropic API.
-const toolDescription = `Enable brief mode for subsequent responses. When brief mode is active, responses should be shorter and more concise. Use this when the user requests shorter output or when detailed explanations are not needed.`
+const toolDescription = `Send a message to the user. This is your primary visible output channel. Use this to communicate findings, status updates, and responses. Supports markdown formatting and file attachments.`
 
-// inputSchemaJSON is the JSON Schema for BriefTool input.
+// inputSchemaJSON is the JSON Schema for SendUserMessage (Brief) tool input.
 const inputSchemaJSON = `{
     "type": "object",
     "properties": {
         "message": {
             "type": "string",
-            "description": "Optional message to display when entering brief mode"
+            "description": "The message for the user. Supports markdown formatting."
+        },
+        "attachments": {
+            "type": "array",
+            "items": {
+                "type": "string"
+            },
+            "description": "Optional file paths (absolute or relative to cwd) to attach. Use for photos, screenshots, diffs, logs, or any file the user should see alongside your message."
+        },
+        "status": {
+            "type": "string",
+            "enum": ["normal", "proactive"],
+            "description": "Use 'proactive' when you're surfacing something the user hasn't asked for and needs to see now - task completion while they're away, a blocker you hit, an unsolicited status update. Use 'normal' when replying to something the user just said."
         }
     },
-    "required": ["message"]
+    "required": ["message", "status"]
 }`

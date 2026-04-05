@@ -19,11 +19,6 @@ import (
 const defaultTimeout = 120 * time.Second // 2 minutes
 const maxTimeout = 600 * time.Second     // 10 minutes
 
-type input struct {
-	Command string `json:"command"`
-	Timeout int    `json:"timeout"` // milliseconds, 0 = default
-}
-
 // BashTool executes shell commands via bash -c.
 type BashTool struct{}
 
@@ -72,18 +67,46 @@ func (t *BashTool) CheckPermissions(_ context.Context, input json.RawMessage, pe
 }
 
 func (t *BashTool) Call(ctx context.Context, inp json.RawMessage, toolCtx *tools.ToolUseContext) (*tools.ToolResult, error) {
-	var in input
-	if err := tools.ValidateInput(inp, &in); err != nil {
+	data, err := tools.ParseRawInput(inp)
+	if err != nil {
 		return tools.ErrorResult(err.Error()), nil
 	}
-	if strings.TrimSpace(in.Command) == "" {
+
+	command, err := tools.RequireString(data, "command")
+	if err != nil {
+		return tools.ErrorResult(err.Error()), nil
+	}
+	if strings.TrimSpace(command) == "" {
 		return tools.ErrorResult("required field \"command\" is missing or empty"), nil
+	}
+
+	// Parse run_in_background with semantic coercion (handles string "true"/"false")
+	runInBackground, err := tools.OptionalSemanticBool(data, "run_in_background", false)
+	if err != nil {
+		return tools.ErrorResult(fmt.Sprintf("invalid \"run_in_background\" parameter: %s", err.Error())), nil
+	}
+
+	// Parse dangerouslyDisableSandbox (schema-only for now, actual sandbox bypass in Phase 11)
+	_, err = tools.OptionalSemanticBool(data, "dangerouslyDisableSandbox", false)
+	if err != nil {
+		return tools.ErrorResult(fmt.Sprintf("invalid \"dangerouslyDisableSandbox\" parameter: %s", err.Error())), nil
+	}
+
+	// Parse description (metadata only, not used for execution)
+	_ = tools.OptionalString(data, "description", "")
+
+	// Parse timeout
+	timeoutMs := tools.OptionalInt(data, "timeout", 0)
+
+	// Handle background execution
+	if runInBackground {
+		return t.callBackground(ctx, command, toolCtx)
 	}
 
 	// Determine timeout
 	timeout := defaultTimeout
-	if in.Timeout > 0 {
-		timeout = time.Duration(in.Timeout) * time.Millisecond
+	if timeoutMs > 0 {
+		timeout = time.Duration(timeoutMs) * time.Millisecond
 		if timeout > maxTimeout {
 			timeout = maxTimeout
 		}
@@ -99,14 +122,14 @@ func (t *BashTool) Call(ctx context.Context, inp json.RawMessage, toolCtx *tools
 		workDir = "."
 	}
 
-	cmd := exec.CommandContext(cmdCtx, "bash", "-c", in.Command)
+	cmd := exec.CommandContext(cmdCtx, "bash", "-c", command)
 	cmd.Dir = workDir
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	err := cmd.Run()
+	err = cmd.Run()
 
 	// Build output: combine stdout and stderr
 	var output strings.Builder
@@ -146,4 +169,63 @@ func (t *BashTool) Call(ctx context.Context, inp json.RawMessage, toolCtx *tools
 		resultText = "(no output)"
 	}
 	return tools.TextResult(resultText), nil
+}
+
+// callBackground starts a command in a background goroutine and returns
+// immediately with a task ID. The output can be retrieved later via TaskOutput.
+func (t *BashTool) callBackground(ctx context.Context, command string, toolCtx *tools.ToolUseContext) (*tools.ToolResult, error) {
+	if toolCtx.TaskStore == nil {
+		return tools.ErrorResult("background execution not available: task store not configured"), nil
+	}
+
+	task := toolCtx.TaskStore.Create(command, "local_bash")
+	_ = toolCtx.TaskStore.Update(task.ID, "running", "")
+
+	workDir := toolCtx.WorkingDir
+	if workDir == "" {
+		workDir = "."
+	}
+
+	go func() {
+		cmd := exec.CommandContext(ctx, "bash", "-c", command)
+		cmd.Dir = workDir
+
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+
+		err := cmd.Run()
+
+		var output strings.Builder
+		if stdout.Len() > 0 {
+			output.WriteString(stdout.String())
+		}
+		if stderr.Len() > 0 {
+			if output.Len() > 0 {
+				output.WriteString("\n")
+			}
+			output.WriteString("STDERR:\n")
+			output.WriteString(stderr.String())
+		}
+
+		if err != nil {
+			exitCode := -1
+			if exitErr, ok := err.(*exec.ExitError); ok {
+				exitCode = exitErr.ExitCode()
+			}
+			result := output.String()
+			if result == "" {
+				result = err.Error()
+			}
+			_ = toolCtx.TaskStore.Update(task.ID, "failed", fmt.Sprintf("Exit code: %d\n%s", exitCode, result))
+		} else {
+			result := output.String()
+			if result == "" {
+				result = "(no output)"
+			}
+			_ = toolCtx.TaskStore.Update(task.ID, "completed", result)
+		}
+	}()
+
+	return tools.TextResult(fmt.Sprintf("Command started in background. Task ID: %s\nUse TaskOutput to check results.", task.ID)), nil
 }

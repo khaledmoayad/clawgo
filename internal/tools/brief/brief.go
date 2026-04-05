@@ -1,22 +1,20 @@
-// Package brief implements the BriefTool for enabling concise response mode.
-// When invoked, it sets a context modifier that flags brief mode on the
-// ToolUseContext, matching the TypeScript Brief tool behavior.
+// Package brief implements the SendUserMessage tool (formerly BriefTool).
+// This is Claude's primary visible output channel for communicating with the user.
+// It handles messages with optional file attachments and status classification.
 package brief
 
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
+	"time"
 
 	"github.com/khaledmoayad/clawgo/internal/permissions"
 	"github.com/khaledmoayad/clawgo/internal/tools"
 )
 
-type input struct {
-	Message string `json:"message"`
-}
-
-// BriefTool enables brief/concise response mode.
+// BriefTool is the SendUserMessage tool -- Claude's primary output channel.
 type BriefTool struct{}
 
 // New creates a new BriefTool.
@@ -27,33 +25,70 @@ func (t *BriefTool) Description() string          { return toolDescription }
 func (t *BriefTool) IsReadOnly() bool             { return true }
 func (t *BriefTool) InputSchema() json.RawMessage { return json.RawMessage(inputSchemaJSON) }
 
-// IsConcurrencySafe returns true -- setting brief mode is a safe metadata operation.
+// IsConcurrencySafe returns true -- sending messages is a safe operation.
 func (t *BriefTool) IsConcurrencySafe(_ json.RawMessage) bool { return true }
 
-// CheckPermissions returns Allow -- enabling brief mode is always permitted.
+// CheckPermissions returns Allow -- sending messages is always permitted.
 func (t *BriefTool) CheckPermissions(_ context.Context, _ json.RawMessage, _ *permissions.PermissionContext) (permissions.PermissionResult, error) {
 	return permissions.Allow, nil
 }
 
 func (t *BriefTool) Call(_ context.Context, inp json.RawMessage, _ *tools.ToolUseContext) (*tools.ToolResult, error) {
-	var in input
-	if err := tools.ValidateInput(inp, &in); err != nil {
+	data, err := tools.ParseRawInput(inp)
+	if err != nil {
 		return tools.ErrorResult(err.Error()), nil
 	}
-	if strings.TrimSpace(in.Message) == "" {
+
+	message, err := tools.RequireString(data, "message")
+	if err != nil {
+		return tools.ErrorResult(err.Error()), nil
+	}
+	if strings.TrimSpace(message) == "" {
 		return tools.ErrorResult("required field \"message\" is missing or empty"), nil
 	}
 
+	status, err := tools.RequireString(data, "status")
+	if err != nil {
+		return tools.ErrorResult(err.Error()), nil
+	}
+	if status != "normal" && status != "proactive" {
+		return tools.ErrorResult(fmt.Sprintf("invalid status %q: must be \"normal\" or \"proactive\"", status)), nil
+	}
+
+	// Parse optional attachments
+	var attachments []string
+	if rawAttachments, ok := data["attachments"]; ok {
+		attachmentList, ok := rawAttachments.([]interface{})
+		if !ok {
+			return tools.ErrorResult("\"attachments\" must be an array of strings"), nil
+		}
+		for i, item := range attachmentList {
+			s, ok := item.(string)
+			if !ok {
+				return tools.ErrorResult(fmt.Sprintf("attachments[%d]: expected string, got %T", i, item)), nil
+			}
+			attachments = append(attachments, s)
+		}
+	}
+
+	sentAt := time.Now().UTC().Format(time.RFC3339)
+
+	suffix := ""
+	if len(attachments) > 0 {
+		noun := "attachment"
+		if len(attachments) > 1 {
+			noun = "attachments"
+		}
+		suffix = fmt.Sprintf(" (%d %s included)", len(attachments), noun)
+	}
+
 	return &tools.ToolResult{
-		Content: []tools.ContentBlock{{Type: "text", Text: in.Message}},
+		Content: []tools.ContentBlock{{Type: "text", Text: fmt.Sprintf("Message delivered to user.%s", suffix)}},
 		Metadata: map[string]any{
-			"brief_mode": true,
-		},
-		ContextModifier: func(ctx *tools.ToolUseContext) {
-			// The ToolUseContext doesn't have a BriefMode field yet;
-			// the query loop will check ToolResult.Metadata for "brief_mode"
-			// to adjust system prompt behavior. This ContextModifier is a
-			// placeholder that will be wired when the REPL handles brief mode.
+			"message":     message,
+			"status":      status,
+			"attachments": attachments,
+			"sentAt":      sentAt,
 		},
 	}, nil
 }

@@ -6,15 +6,18 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/khaledmoayad/clawgo/internal/permissions"
 	"github.com/khaledmoayad/clawgo/internal/tools"
 	"github.com/khaledmoayad/clawgo/internal/tools/tasks"
 )
 
-type input struct {
-	TaskID string `json:"task_id"`
-}
+const (
+	defaultBlockTimeout = 30000.0  // 30 seconds in ms
+	maxBlockTimeout     = 600000.0 // 10 minutes in ms
+	pollInterval        = 250 * time.Millisecond
+)
 
 // TaskOutputTool retrieves the output log of a background task.
 type TaskOutputTool struct {
@@ -38,18 +41,79 @@ func (t *TaskOutputTool) CheckPermissions(_ context.Context, _ json.RawMessage, 
 	return permissions.CheckPermission("TaskOutput", true, permCtx), nil
 }
 
-func (t *TaskOutputTool) Call(_ context.Context, inp json.RawMessage, _ *tools.ToolUseContext) (*tools.ToolResult, error) {
-	var in input
-	if err := tools.ValidateInput(inp, &in); err != nil {
+func (t *TaskOutputTool) Call(ctx context.Context, inp json.RawMessage, _ *tools.ToolUseContext) (*tools.ToolResult, error) {
+	data, err := tools.ParseRawInput(inp)
+	if err != nil {
 		return tools.ErrorResult(err.Error()), nil
 	}
-	if strings.TrimSpace(in.TaskID) == "" {
+
+	taskID, err := tools.RequireString(data, "task_id")
+	if err != nil {
+		return tools.ErrorResult(err.Error()), nil
+	}
+	if strings.TrimSpace(taskID) == "" {
 		return tools.ErrorResult("required field \"task_id\" is missing or empty"), nil
 	}
 
-	task, ok := t.store.Get(in.TaskID)
+	// Parse block parameter with semantic coercion (handles string "true"/"false")
+	block, err := tools.OptionalSemanticBool(data, "block", true)
+	if err != nil {
+		return tools.ErrorResult(fmt.Sprintf("invalid \"block\" parameter: %s", err.Error())), nil
+	}
+
+	// Parse timeout parameter with semantic coercion (handles string numbers)
+	timeoutMs, err := tools.OptionalSemanticNumber(data, "timeout", defaultBlockTimeout)
+	if err != nil {
+		return tools.ErrorResult(fmt.Sprintf("invalid \"timeout\" parameter: %s", err.Error())), nil
+	}
+	if timeoutMs < 0 {
+		timeoutMs = 0
+	}
+	if timeoutMs > maxBlockTimeout {
+		timeoutMs = maxBlockTimeout
+	}
+
+	task, ok := t.store.Get(taskID)
 	if !ok {
-		return tools.ErrorResult(fmt.Sprintf("task %q not found", in.TaskID)), nil
+		return tools.ErrorResult(fmt.Sprintf("task %q not found", taskID)), nil
+	}
+
+	// If block=true and task is not yet finished, wait for completion
+	if block && !isTerminalStatus(task.Status) {
+		timeout := time.Duration(timeoutMs) * time.Millisecond
+		deadline := time.Now().Add(timeout)
+
+		for time.Now().Before(deadline) {
+			select {
+			case <-ctx.Done():
+				return tools.ErrorResult("request cancelled while waiting for task"), nil
+			default:
+			}
+
+			// Re-fetch task status
+			task, ok = t.store.Get(taskID)
+			if !ok {
+				return tools.ErrorResult(fmt.Sprintf("task %q not found", taskID)), nil
+			}
+			if isTerminalStatus(task.Status) {
+				break
+			}
+
+			// Sleep briefly before polling again
+			time.Sleep(pollInterval)
+		}
+
+		// Check if we timed out
+		if !isTerminalStatus(task.Status) {
+			output := task.Output
+			if output == "" {
+				output = "no output available yet"
+			}
+			return tools.TextResult(fmt.Sprintf(
+				"Task %s (%s): timed out after %dms waiting for completion.\n%s",
+				task.ID, task.Status, int(timeoutMs), output,
+			)), nil
+		}
 	}
 
 	output := task.Output
@@ -58,4 +122,14 @@ func (t *TaskOutputTool) Call(_ context.Context, inp json.RawMessage, _ *tools.T
 	}
 
 	return tools.TextResult(fmt.Sprintf("Task %s (%s) output:\n%s", task.ID, task.Status, output)), nil
+}
+
+// isTerminalStatus returns true if the task status indicates completion.
+func isTerminalStatus(status string) bool {
+	switch status {
+	case "completed", "stopped", "failed":
+		return true
+	default:
+		return false
+	}
 }

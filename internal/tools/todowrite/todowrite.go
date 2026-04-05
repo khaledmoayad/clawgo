@@ -1,6 +1,6 @@
 // Package todowrite implements the TodoWriteTool for creating and managing task lists.
-// Todos are persisted to .claude/todos.json in the project root, matching the
-// TypeScript TodoWrite tool behavior.
+// Each call REPLACES the full todo list (not merge by ID), matching Claude Code behavior.
+// Todos are persisted to .claude/todos.json in the project root.
 package todowrite
 
 import (
@@ -15,12 +15,11 @@ import (
 	"github.com/khaledmoayad/clawgo/internal/tools"
 )
 
-// TodoItem represents a single todo entry.
+// TodoItem represents a single todo entry matching Claude Code's schema.
 type TodoItem struct {
-	ID       string `json:"id"`
-	Content  string `json:"content"`
-	Status   string `json:"status"`   // "pending", "in_progress", "done"
-	Priority string `json:"priority"` // "high", "medium", "low"
+	Content    string `json:"content"`
+	Status     string `json:"status"`     // "pending", "in_progress", "completed"
+	ActiveForm string `json:"activeForm"` // The currently active phrasing of this task
 }
 
 type input struct {
@@ -50,20 +49,17 @@ func (t *TodoWriteTool) Call(_ context.Context, inp json.RawMessage, toolCtx *to
 	if err := tools.ValidateInput(inp, &in); err != nil {
 		return tools.ErrorResult(err.Error()), nil
 	}
-	if len(in.Todos) == 0 {
-		return tools.ErrorResult("required field \"todos\" is missing or empty"), nil
-	}
 
 	// Validate todo items
 	for i, todo := range in.Todos {
-		if strings.TrimSpace(todo.ID) == "" {
-			return tools.ErrorResult(fmt.Sprintf("todo[%d]: id is required", i)), nil
-		}
 		if strings.TrimSpace(todo.Content) == "" {
 			return tools.ErrorResult(fmt.Sprintf("todo[%d]: content is required", i)), nil
 		}
-		if todo.Status != "pending" && todo.Status != "in_progress" && todo.Status != "done" {
-			return tools.ErrorResult(fmt.Sprintf("todo[%d]: invalid status %q (must be pending, in_progress, or done)", i, todo.Status)), nil
+		if todo.Status != "pending" && todo.Status != "in_progress" && todo.Status != "completed" {
+			return tools.ErrorResult(fmt.Sprintf("todo[%d]: invalid status %q (must be pending, in_progress, or completed)", i, todo.Status)), nil
+		}
+		if strings.TrimSpace(todo.ActiveForm) == "" {
+			return tools.ErrorResult(fmt.Sprintf("todo[%d]: activeForm is required", i)), nil
 		}
 	}
 
@@ -74,37 +70,26 @@ func (t *TodoWriteTool) Call(_ context.Context, inp json.RawMessage, toolCtx *to
 	}
 	todosPath := filepath.Join(projectRoot, ".claude", "todos.json")
 
-	// Read existing todos
-	existing := make(map[string]TodoItem)
+	// Read existing todos for the "old" state
+	var oldTodos []TodoItem
 	data, err := os.ReadFile(todosPath)
 	if err == nil {
-		var existingList []TodoItem
-		if jsonErr := json.Unmarshal(data, &existingList); jsonErr == nil {
-			for _, item := range existingList {
-				existing[item.ID] = item
-			}
-		}
+		_ = json.Unmarshal(data, &oldTodos) // ignore error, start fresh if corrupt
 	}
 
-	// Merge: update existing by id, add new
-	var added, updated int
-	for _, todo := range in.Todos {
-		if _, exists := existing[todo.ID]; exists {
-			updated++
-		} else {
-			added++
-		}
-		// Set default priority if not specified
-		if todo.Priority == "" {
-			todo.Priority = "medium"
-		}
-		existing[todo.ID] = todo
-	}
+	// Full replacement: the new list IS the input (not merged by ID)
+	newTodos := in.Todos
 
-	// Convert map back to sorted list (by id for deterministic output)
-	todoList := make([]TodoItem, 0, len(existing))
-	for _, item := range existing {
-		todoList = append(todoList, item)
+	// If all completed, clear the list (matching Claude Code behavior)
+	allCompleted := len(newTodos) > 0
+	for _, todo := range newTodos {
+		if todo.Status != "completed" {
+			allCompleted = false
+			break
+		}
+	}
+	if allCompleted {
+		newTodos = []TodoItem{}
 	}
 
 	// Create parent directory if needed
@@ -114,7 +99,7 @@ func (t *TodoWriteTool) Call(_ context.Context, inp json.RawMessage, toolCtx *to
 	}
 
 	// Write todos file
-	jsonData, err := json.MarshalIndent(todoList, "", "  ")
+	jsonData, err := json.MarshalIndent(newTodos, "", "  ")
 	if err != nil {
 		return tools.ErrorResult(fmt.Sprintf("failed to marshal todos: %s", err.Error())), nil
 	}
@@ -122,5 +107,7 @@ func (t *TodoWriteTool) Call(_ context.Context, inp json.RawMessage, toolCtx *to
 		return tools.ErrorResult(fmt.Sprintf("failed to write todos file: %s", err.Error())), nil
 	}
 
-	return tools.TextResult(fmt.Sprintf("Updated todos: %d added, %d updated, %d total", added, updated, len(todoList))), nil
+	return tools.TextResult(fmt.Sprintf(
+		"Todos have been modified successfully. Ensure that you continue to use the todo list to track your progress. Please proceed with the current tasks if applicable",
+	)), nil
 }
