@@ -29,11 +29,14 @@ func NewInputModel() InputModel {
 
 // Update processes key events for the input area.
 // Enter (without Shift) sends a SubmitMsg.
+// Tab completes slash commands when input starts with "/".
 // Shift+Enter inserts a newline (handled by textarea).
 func (m InputModel) Update(msg tea.Msg) (InputModel, tea.Cmd) {
-	// Handle key messages for submit
+	// Handle key messages for submit and tab completion
 	if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
 		k := keyMsg.Key()
+
+		// Submit on Enter (without Shift)
 		if m.keys.IsSubmit(k) && !m.keys.IsNewLine(k) {
 			text := m.textarea.Value()
 			if strings.TrimSpace(text) != "" {
@@ -41,10 +44,54 @@ func (m InputModel) Update(msg tea.Msg) (InputModel, tea.Cmd) {
 			}
 			return m, nil
 		}
+
+		// Tab completion for slash commands
+		if k.Code == tea.KeyTab && len(m.commandNames) > 0 {
+			text := m.textarea.Value()
+			if completed, ok := m.tryCompleteCommand(text); ok {
+				m.textarea.SetValue(completed)
+				// Move cursor to end
+				m.textarea.CursorEnd()
+				return m, nil
+			}
+		}
 	}
 	var cmd tea.Cmd
 	m.textarea, cmd = m.textarea.Update(msg)
 	return m, cmd
+}
+
+// tryCompleteCommand attempts to complete a partial slash command.
+// Returns the completed text and true if exactly one match is found.
+func (m InputModel) tryCompleteCommand(text string) (string, bool) {
+	if !strings.HasPrefix(text, "/") {
+		return "", false
+	}
+
+	// Extract the partial command name (everything after "/" before first space)
+	partial := text[1:]
+	if strings.Contains(partial, " ") {
+		// Already has arguments, no completion
+		return "", false
+	}
+
+	partial = strings.ToLower(partial)
+	if partial == "" {
+		return "", false
+	}
+
+	var matches []string
+	for _, name := range m.commandNames {
+		if strings.HasPrefix(name, partial) {
+			matches = append(matches, name)
+		}
+	}
+
+	if len(matches) == 1 {
+		return "/" + matches[0], true
+	}
+
+	return "", false
 }
 
 // View renders the input textarea.
