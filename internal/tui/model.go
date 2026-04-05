@@ -169,7 +169,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case SubmitMsg:
-		// User submitted input
+		// Check if input is a slash command
+		if m.cmdRegistry != nil && commands.IsCommand(msg.Text) {
+			return m.handleSlashCommand(msg.Text)
+		}
+
+		// Normal user input: send to API
 		m.output.AddMessage(DisplayMessage{Role: "user", Content: msg.Text})
 		m.input.Reset()
 		m.state = StateStreaming
@@ -179,6 +184,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, m.OnSubmit(msg.Text))
 		}
 		return m, tea.Batch(cmds...)
+
+	case CommandResultMsg:
+		return m.handleCommandResult(msg)
 
 	case StreamEventMsg:
 		return m.handleStreamEvent(msg)
@@ -296,6 +304,104 @@ func (m Model) handleStreamEvent(msg StreamEventMsg) (tea.Model, tea.Cmd) {
 		return m, m.input.Focus()
 	}
 	return m, nil
+}
+
+// handleSlashCommand intercepts slash command input, parses it, and executes it
+// via the command registry. Returns the result as a CommandResultMsg.
+func (m Model) handleSlashCommand(text string) (tea.Model, tea.Cmd) {
+	m.input.Reset()
+
+	name, args := m.cmdRegistry.ParseCommandInput(text)
+
+	cmd, found := m.cmdRegistry.Find(name)
+	if !found {
+		m.output.AddMessage(DisplayMessage{
+			Role:    "error",
+			Content: "Unknown command: /" + name + ". Type /help for available commands.",
+		})
+		return m, m.input.Focus()
+	}
+
+	// Build the command context from current TUI state
+	cmdCtx := &commands.CommandContext{
+		WorkingDir:  m.config.WorkingDir,
+		Model:       m.config.Model,
+		SessionID:   m.config.SessionID,
+		Version:     m.config.Version,
+		CmdRegistry: m.cmdRegistry,
+	}
+
+	result, err := cmd.Execute(args, cmdCtx)
+	if err != nil {
+		m.output.AddMessage(DisplayMessage{
+			Role:    "error",
+			Content: "Command error: " + err.Error(),
+		})
+		return m, m.input.Focus()
+	}
+
+	// Return the command result as a message for the update loop to handle
+	return m, func() tea.Msg {
+		return CommandResultMsg{
+			Type:    result.Type,
+			Value:   result.Value,
+			Command: name,
+		}
+	}
+}
+
+// handleCommandResult processes the result of a slash command execution.
+func (m Model) handleCommandResult(msg CommandResultMsg) (tea.Model, tea.Cmd) {
+	switch msg.Type {
+	case "text":
+		m.output.AddMessage(DisplayMessage{
+			Role:    "command",
+			Content: msg.Value,
+		})
+		return m, m.input.Focus()
+
+	case "clear":
+		m.output.Clear()
+		return m, m.input.Focus()
+
+	case "compact":
+		if m.OnCompact != nil {
+			return m, tea.Batch(m.OnCompact(), m.input.Focus())
+		}
+		m.output.AddMessage(DisplayMessage{
+			Role:    "command",
+			Content: "Compacting conversation context...",
+		})
+		return m, m.input.Focus()
+
+	case "model_change":
+		m.config.Model = msg.Value
+		if m.OnModelChange != nil {
+			return m, tea.Batch(m.OnModelChange(msg.Value), m.input.Focus())
+		}
+		m.output.AddMessage(DisplayMessage{
+			Role:    "command",
+			Content: "Model changed to: " + msg.Value,
+		})
+		return m, m.input.Focus()
+
+	case "exit":
+		return m, tea.Quit
+
+	case "skip", "rewind":
+		// No-op for result types that are handled elsewhere
+		return m, m.input.Focus()
+
+	default:
+		// Unknown result type, display as text
+		if msg.Value != "" {
+			m.output.AddMessage(DisplayMessage{
+				Role:    "command",
+				Content: msg.Value,
+			})
+		}
+		return m, m.input.Focus()
+	}
 }
 
 // View renders the complete TUI as a tea.View.

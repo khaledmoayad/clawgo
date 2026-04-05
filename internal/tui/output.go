@@ -9,7 +9,7 @@ import (
 
 // DisplayMessage represents a message in the conversation display.
 type DisplayMessage struct {
-	Role        string // "user", "assistant", "tool_use", "tool_result", "thinking", "error"
+	Role        string // "user", "assistant", "tool_use", "tool_result", "thinking", "error", "command"
 	Content     string
 	ToolName    string // For tool_use/tool_result messages
 	DiffContent bool   // True if content is known to be a unified diff (fast path)
@@ -119,6 +119,8 @@ func (m OutputModel) renderMessage(msg DisplayMessage) string {
 			content = render.HighlightCodeDefault(msg.Content, "")
 		}
 		sb.WriteString(MessagePadding.Render(content))
+	case "command":
+		sb.WriteString(DimStyle.Render(msg.Content))
 	case "error":
 		sb.WriteString(ErrorStyle.Render("Error: " + msg.Content))
 	}
