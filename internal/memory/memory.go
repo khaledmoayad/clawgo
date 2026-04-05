@@ -139,6 +139,48 @@ func (m *MemoryManager) LoadMemories(projectPath string) (string, error) {
 	return string(data), nil
 }
 
+// AutoDreamCheck determines if memory extraction should run at session end.
+// Returns true if all conditions are met:
+// 1. Auto-memory is enabled (via config)
+// 2. Token count >= MinTokensForExtraction
+// 3. Tool call count >= MinToolCallsForExtraction
+// 4. Session had meaningful interaction (not just a greeting)
+//
+// This replaces the simple ShouldExtractMemory check with awareness of the
+// forked agent pattern -- when CacheSafeParams are available, the forked agent
+// path is preferred for its prompt cache sharing benefits.
+func (m *MemoryManager) AutoDreamCheck(tokenCount, toolCallCount int) bool {
+	if !m.config.Enabled {
+		return false
+	}
+	return tokenCount >= m.config.MinTokensForExtraction &&
+		toolCallCount >= m.config.MinToolCallsForExtraction
+}
+
+// ExtractWithForkedAgent runs memory extraction using the forked agent pattern.
+// This is preferred over ExtractMemory when CacheSafeParams are available,
+// because it shares the parent's prompt cache (cheaper and faster).
+//
+// Falls back to the direct ExtractMemory approach if CacheSafeParams are nil.
+func (m *MemoryManager) ExtractWithForkedAgent(ctx context.Context, messages []api.Message, projectPath string) error {
+	cacheSafe := GetLastCacheSafeParams()
+
+	if cacheSafe == nil {
+		// No cache-safe params available -- fall back to direct extraction
+		return m.ExtractMemory(ctx, messages, projectPath)
+	}
+
+	memDir := GetAutoMemoryDirDefault(projectPath)
+
+	return ExtractMemories(ctx, m.client, ExtractMemoriesParams{
+		Config:          DefaultExtractMemoriesConfig(),
+		CacheSafeParams: cacheSafe,
+		Messages:        messages,
+		ProjectPath:     projectPath,
+		MemoryDir:       memDir,
+	})
+}
+
 // hashProjectPath returns a SHA256 hash prefix of the project path.
 // Uses first 16 hex characters, matching session/storage.go hashPath.
 func hashProjectPath(p string) string {
