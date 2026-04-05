@@ -45,6 +45,16 @@ const inputSchemaJSON = `{
         "query": {
             "type": "string",
             "description": "The search query"
+        },
+        "allowed_domains": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Only include search results from these domains"
+        },
+        "blocked_domains": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Never include search results from these domains"
         }
     },
     "required": ["query"]

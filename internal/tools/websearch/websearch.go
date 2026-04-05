@@ -15,12 +15,24 @@ import (
 )
 
 type input struct {
-	Query string `json:"query"`
+	Query          string   `json:"query"`
+	AllowedDomains []string `json:"allowed_domains,omitempty"`
+	BlockedDomains []string `json:"blocked_domains,omitempty"`
 }
 
 func (in *input) Validate() error {
 	if strings.TrimSpace(in.Query) == "" {
 		return fmt.Errorf("required field \"query\" is missing or empty")
+	}
+	for _, d := range in.AllowedDomains {
+		if strings.TrimSpace(d) == "" {
+			return fmt.Errorf("allowed_domains contains an empty string")
+		}
+	}
+	for _, d := range in.BlockedDomains {
+		if strings.TrimSpace(d) == "" {
+			return fmt.Errorf("blocked_domains contains an empty string")
+		}
 	}
 	return nil
 }
@@ -64,14 +76,22 @@ func (t *WebSearchTool) Call(ctx context.Context, inp json.RawMessage, toolCtx *
 		return tools.ErrorResult(err.Error()), nil
 	}
 
+	metadata := map[string]any{
+		"server_tool": true,
+		"query":       in.Query,
+	}
+	if len(in.AllowedDomains) > 0 {
+		metadata["allowed_domains"] = in.AllowedDomains
+	}
+	if len(in.BlockedDomains) > 0 {
+		metadata["blocked_domains"] = in.BlockedDomains
+	}
+
 	return &tools.ToolResult{
 		Content: []tools.ContentBlock{{
 			Type: "text",
 			Text: fmt.Sprintf("Web search is handled server-side by the Anthropic API. Query: %q", in.Query),
 		}},
-		Metadata: map[string]any{
-			"server_tool": true,
-			"query":       in.Query,
-		},
+		Metadata: metadata,
 	}, nil
 }

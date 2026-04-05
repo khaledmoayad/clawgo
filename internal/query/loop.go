@@ -470,6 +470,10 @@ func buildRequest(params *LoopParams, state *LoopState) anthropic.MessageNewPara
 	}
 
 	// Add tool definitions
+	// TODO: Server-side tools (WebSearch, WebFetch) should be sent as their native
+	// ToolUnionParam types (e.g., OfWebSearchTool20250305 with AllowedDomains/BlockedDomains)
+	// rather than as generic OfTool definitions. The domain filter parameters are currently
+	// captured in tool metadata but need to be forwarded here when constructing the API request.
 	toolDefs := params.Registry.ToolDefinitions()
 	if len(toolDefs) > 0 {
 		apiTools := make([]anthropic.ToolUnionParam, 0, len(toolDefs))
