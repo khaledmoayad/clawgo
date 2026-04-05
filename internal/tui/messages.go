@@ -64,3 +64,20 @@ type CommandResultMsg struct {
 	Value   string // Display text or new model name
 	Command string // The command name that produced this result (e.g. "help")
 }
+
+// DetailedPermissionRequestMsg asks the user to approve a tool use with
+// full tool-specific context. This replaces PermissionRequestMsg when the
+// query loop has enough context to populate a PermissionRequestDetails.
+type DetailedPermissionRequestMsg struct {
+	Details PermissionRequestDetails
+}
+
+// NotificationMsg signals the TUI to display a toast notification.
+type NotificationMsg struct {
+	Notification Notification
+}
+
+// ShowPermissionRulesMsg signals the TUI to open the permission rules panel.
+type ShowPermissionRulesMsg struct {
+	Rules []PermissionRuleEntry
+}

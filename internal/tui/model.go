@@ -47,6 +47,9 @@ type Model struct {
 	output     OutputModel
 	spinner    SpinnerModel
 	permission PermissionModel
+	specPerm   SpecializedPermissionModel // Tool-specific permission dialogs
+	ruleList   PermissionRuleListModel    // Permission rule management UI
+	notifs     NotificationModel          // Toast notification system
 	viewport   diff.ViewportModel
 	keys       KeyMap
 	keyConfig  keybind.KeyBindConfig
@@ -95,6 +98,9 @@ func New(cfg Config) Model {
 		output:      NewOutputModel(),
 		spinner:     NewSpinnerModel(),
 		permission:  NewPermissionModel(),
+		specPerm:    NewSpecializedPermissionModel(),
+		ruleList:    NewPermissionRuleListModel(),
+		notifs:      NewNotificationModel(),
 		viewport:    diff.NewViewportModel(80, 24),
 		keys:        DefaultKeyMap(),
 		keyConfig:   keyConfig,
@@ -159,6 +165,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		m.output.SetWidth(msg.Width)
 		m.permission.SetWidth(msg.Width)
+		m.specPerm.SetWidth(msg.Width)
+		m.ruleList.SetWidth(msg.Width)
+		m.notifs.SetWidth(msg.Width)
 		// Reserve 4 lines for header + status bar
 		m.viewport.SetSize(msg.Width, max(1, msg.Height-4))
 		return m, nil
@@ -197,8 +206,33 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.permission.Show(msg.ToolName, msg.ToolInput, msg.Description)
 		return m, nil
 
+	case DetailedPermissionRequestMsg:
+		m.state = StatePermission
+		m.spinner.Stop()
+		m.specPerm.ShowDetailed(msg.Details)
+		return m, nil
+
+	case NotificationMsg:
+		cmd := m.notifs.Add(msg.Notification)
+		return m, cmd
+
+	case notificationDismissMsg:
+		var cmd tea.Cmd
+		m.notifs, cmd = m.notifs.Update(msg)
+		return m, cmd
+
+	case ShowPermissionRulesMsg:
+		m.ruleList.SetRules(msg.Rules)
+		m.ruleList.Show()
+		return m, nil
+
+	case PermissionRuleRemoveMsg:
+		// Rule was removed from the UI; could be forwarded to settings
+		return m, nil
+
 	case PermissionResponseMsg:
 		m.permission.Hide()
+		m.specPerm.Hide()
 		if msg.Approved {
 			m.state = StateStreaming
 			cmd := m.spinner.Start("Running " + msg.ToolName)
@@ -243,6 +277,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 	}
 
+	// Rule list overlay intercepts keys when active
+	if m.ruleList.IsActive() {
+		var cmd tea.Cmd
+		m.ruleList, cmd = m.ruleList.Update(msg)
+		if cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+		return m, tea.Batch(cmds...)
+	}
+
 	// Delegate to active sub-model
 	switch m.state {
 	case StateInput:
@@ -254,9 +298,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.spinner, cmd = m.spinner.Update(msg)
 		cmds = append(cmds, cmd)
 	case StatePermission:
-		var cmd tea.Cmd
-		m.permission, cmd = m.permission.Update(msg)
-		cmds = append(cmds, cmd)
+		// Delegate to whichever permission model is active
+		if m.specPerm.IsActive() {
+			var cmd tea.Cmd
+			m.specPerm.PermissionModel, cmd = m.specPerm.PermissionModel.Update(msg)
+			cmds = append(cmds, cmd)
+		} else {
+			var cmd tea.Cmd
+			m.permission, cmd = m.permission.Update(msg)
+			cmds = append(cmds, cmd)
+		}
 	case StateViewport:
 		var cmd tea.Cmd
 		m.viewport, cmd = m.viewport.Update(msg)
@@ -435,11 +486,27 @@ func (m Model) viewString() string {
 			sb.WriteString(m.spinner.View())
 		}
 	case StatePermission:
-		sb.WriteString(m.permission.View())
+		// Prefer specialized permission dialog when active
+		if m.specPerm.IsActive() {
+			sb.WriteString(m.specPerm.View())
+		} else {
+			sb.WriteString(m.permission.View())
+		}
 	case StateViewport:
 		sb.WriteString(m.viewport.View())
 		sb.WriteString("\n")
 		sb.WriteString(DimStyle.Render("  Scroll: arrows/j/k  Exit: q/Esc"))
+	}
+
+	// Permission rules overlay
+	if m.ruleList.IsActive() {
+		sb.WriteString(m.ruleList.View())
+	}
+
+	// Toast notifications (rendered at the bottom, above input)
+	if notifView := m.notifs.View(); notifView != "" {
+		sb.WriteString("\n")
+		sb.WriteString(notifView)
 	}
 
 	return sb.String()
@@ -450,3 +517,12 @@ func (m Model) ViewContent() string { return m.viewString() }
 
 // CurrentState returns the current TUI state (for testing).
 func (m Model) CurrentState() State { return m.state }
+
+// Notifications returns the notification model for external access.
+func (m *Model) Notifications() *NotificationModel { return &m.notifs }
+
+// SpecializedPermission returns the specialized permission model for external access.
+func (m *Model) SpecializedPermission() *SpecializedPermissionModel { return &m.specPerm }
+
+// PermissionRules returns the permission rule list model for external access.
+func (m *Model) PermissionRules() *PermissionRuleListModel { return &m.ruleList }
