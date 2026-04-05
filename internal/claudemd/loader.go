@@ -31,9 +31,11 @@ const (
 
 // MemoryFile represents a single loaded CLAUDE.md instruction file.
 type MemoryFile struct {
-	Path    string     // Absolute path to the file
-	Type    MemoryType // Classification of the file source
-	Content string     // File contents
+	Path         string       // Absolute path to the file
+	Type         MemoryType   // Classification of the file source
+	Content      string       // File contents
+	Frontmatter  *Frontmatter // Parsed frontmatter data (nil if none)
+	IncludedFrom string       // Path of the file that included this one (empty for directly loaded)
 }
 
 // LoadMemoryFiles discovers and loads CLAUDE.md files starting from cwd,
