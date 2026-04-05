@@ -18,6 +18,7 @@ import (
 	"github.com/khaledmoayad/clawgo/internal/config"
 	"github.com/khaledmoayad/clawgo/internal/cost"
 	"github.com/khaledmoayad/clawgo/internal/git"
+	"github.com/khaledmoayad/clawgo/internal/mcp"
 	"github.com/khaledmoayad/clawgo/internal/permissions"
 	"github.com/khaledmoayad/clawgo/internal/session"
 	"github.com/khaledmoayad/clawgo/internal/systemprompt"
@@ -283,6 +284,31 @@ func Run(ctx context.Context, params *RunParams, cfg *config.Config, settings *c
 	// 6. Set up cost tracker
 	costTracker := cost.NewTracker(client.Model)
 
+	// 6b. Initialize MCP manager from settings
+	mcpManager := mcp.NewManager()
+	if len(settings.MCPServers) > 0 {
+		mcpConfigs, err := mcp.ParseMCPServers(settings.MCPServers)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to parse MCP server configs: %v\n", err)
+		} else {
+			// Filter by enterprise policy before connecting
+			var allowed []mcp.MCPServerConfig
+			for _, cfg := range mcpConfigs {
+				decision := mcp.EvaluateServerPolicy(cfg.Name, settings)
+				switch decision {
+				case mcp.PolicyAllowed:
+					allowed = append(allowed, cfg)
+				case mcp.PolicyDenied:
+					fmt.Fprintf(os.Stderr, "MCP server %q blocked by enterprise policy\n", cfg.Name)
+				case mcp.PolicyDisabled:
+					// silently skip
+				}
+			}
+			mcpManager.ConnectAll(ctx, allowed)
+		}
+	}
+	defer mcpManager.Close()
+
 	// 7. Determine working directory
 	workDir, _ := os.Getwd()
 	homeDir, _ := os.UserHomeDir()
@@ -439,6 +465,7 @@ func Run(ctx context.Context, params *RunParams, cfg *config.Config, settings *c
 			OutputFormat:         params.OutputFormat,
 			CmdRegistry:          cmdRegistry,
 			ToolRules:            toolRules,
+			MCPManager:           mcpManager,
 			// CLI-05 output control
 			IncludeHookEvents:      params.IncludeHookEvents,
 			IncludePartialMessages: params.IncludePartialMessages,
@@ -468,5 +495,6 @@ func Run(ctx context.Context, params *RunParams, cfg *config.Config, settings *c
 		Model:                client.Model,
 		CmdRegistry:          cmdRegistry,
 		ToolRules:            toolRules,
+		MCPManager:           mcpManager,
 	})
 }

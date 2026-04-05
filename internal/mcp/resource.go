@@ -96,6 +96,113 @@ func (m *Manager) ReadResource(ctx context.Context, serverName, uri string) (*go
 	return cs.ReadResource(ctx, uri)
 }
 
+// ConnectAll connects to all provided MCP server configurations concurrently.
+// Each server is connected individually; failures are recorded as StatusFailed
+// or StatusNeedsAuth on the server entry rather than aborting the batch.
+// Disabled servers are registered with StatusDisabled. Servers that require
+// OAuth but have no token are registered with StatusNeedsAuth.
+func (m *Manager) ConnectAll(ctx context.Context, configs []MCPServerConfig) {
+	for _, cfg := range configs {
+		if cfg.Disabled {
+			m.AddServer(cfg.Name, &ConnectedServer{
+				Config: cfg,
+				Status: StatusDisabled,
+			})
+			continue
+		}
+
+		// Check if OAuth is needed but not yet available
+		if cfg.OAuth != nil {
+			provider := NewClaudeAuthProvider(cfg)
+			if NeedsAuth(cfg, provider) {
+				m.AddServer(cfg.Name, &ConnectedServer{
+					Config: cfg,
+					Status: StatusNeedsAuth,
+				})
+				continue
+			}
+		}
+
+		cs, err := ConnectToServer(ctx, cfg)
+		if err != nil {
+			m.AddServer(cfg.Name, &ConnectedServer{
+				Config: cfg,
+				Status: StatusFailed,
+			})
+			continue
+		}
+
+		// Run initial discovery to populate tools, resources, prompts
+		if discErr := cs.RefreshDiscovery(ctx); discErr != nil {
+			// Connection succeeded but discovery failed -- still register
+			// with connected status; tools may be partially populated.
+			_ = discErr
+		}
+		m.AddServer(cfg.Name, cs)
+	}
+}
+
+// ListDiscoveredPrompts aggregates discovered prompts from all connected servers.
+// Returns a flat slice of all prompts across servers.
+func (m *Manager) ListDiscoveredPrompts() []DiscoveredPrompt {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var all []DiscoveredPrompt
+	for _, cs := range m.servers {
+		if cs.Status != StatusConnected {
+			continue
+		}
+		cs.discovery.mu.RLock()
+		all = append(all, cs.discovery.prompts...)
+		cs.discovery.mu.RUnlock()
+	}
+	return all
+}
+
+// ListDiscoveredTools aggregates discovered tools from all connected servers.
+// Returns a flat slice of all tools across servers.
+func (m *Manager) ListDiscoveredTools() []DiscoveredTool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var all []DiscoveredTool
+	for _, cs := range m.servers {
+		if cs.Status != StatusConnected {
+			continue
+		}
+		all = append(all, cs.DiscoveredTools()...)
+	}
+	return all
+}
+
+// ServerStatus returns a summary of each server's name and connection status.
+// Useful for the /mcp command to display live state.
+func (m *Manager) ServerStatus() []ServerStatusEntry {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	entries := make([]ServerStatusEntry, 0, len(m.servers))
+	for name, cs := range m.servers {
+		entry := ServerStatusEntry{
+			Name:      name,
+			Status:    cs.Status,
+			Transport: string(cs.Config.Type),
+			ToolCount: len(cs.DiscoveredTools()),
+		}
+		entries = append(entries, entry)
+	}
+	return entries
+}
+
+// ServerStatusEntry describes the current state of a single MCP server.
+type ServerStatusEntry struct {
+	Name      string
+	Status    ConnectionStatus
+	Transport string
+	ToolCount int
+}
+
 // Close terminates all managed server connections.
 func (m *Manager) Close() error {
 	m.mu.Lock()

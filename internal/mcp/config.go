@@ -39,9 +39,20 @@ func LoadMCPConfig(configJSON json.RawMessage) ([]MCPServerConfig, error) {
 		return nil, nil
 	}
 
+	return ParseMCPServers(wrapper.MCPServers)
+}
+
+// ParseMCPServers parses a raw mcpServers JSON value into a slice of
+// MCPServerConfig. It supports both the map format (where keys are server
+// names) and a direct array format.
+func ParseMCPServers(raw json.RawMessage) ([]MCPServerConfig, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, nil
+	}
+
 	// Try map format first: {"server-name": {...config...}}
 	var serverMap map[string]serverConfigRaw
-	if err := json.Unmarshal(wrapper.MCPServers, &serverMap); err == nil {
+	if err := json.Unmarshal(raw, &serverMap); err == nil {
 		configs := make([]MCPServerConfig, 0, len(serverMap))
 		for name, raw := range serverMap {
 			configs = append(configs, MCPServerConfig{
@@ -68,7 +79,7 @@ func LoadMCPConfig(configJSON json.RawMessage) ([]MCPServerConfig, error) {
 
 	// Try array format: [{name: "...", ...}]
 	var configs []MCPServerConfig
-	if err := json.Unmarshal(wrapper.MCPServers, &configs); err != nil {
+	if err := json.Unmarshal(raw, &configs); err != nil {
 		return nil, fmt.Errorf("parsing mcpServers: %w", err)
 	}
 	return configs, nil

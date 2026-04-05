@@ -97,6 +97,12 @@ type LoopParams struct {
 	// Collapser manages staged context collapses drained before reactive compact.
 	// If nil, context collapse is disabled.
 	Collapser *compact.ContextCollapser
+
+	// MCPManager holds a reference to the live MCP Manager (typed as any
+	// to avoid circular imports between query and mcp packages). Tool
+	// implementations that need MCP access type-assert this to
+	// *mcp.Manager.
+	MCPManager any
 }
 
 // toolUseContext creates a ToolUseContext for tool execution.
@@ -113,5 +119,6 @@ func (p *LoopParams) toolUseContext(ctx context.Context) *tools.ToolUseContext {
 		AbortCtx:       ctx,
 		PermCtx:        p.PermCtx,
 		FileStateCache: fsc,
+		MCPManager:     p.MCPManager,
 	}
 }

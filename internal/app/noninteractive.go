@@ -33,6 +33,7 @@ type NonInteractiveParams struct {
 	OutputFormat         string // "text", "json", "stream-json"
 	CmdRegistry          *commands.CommandRegistry
 	ToolRules            *permissions.ToolPermissionRules
+	MCPManager           any // *mcp.Manager, typed as any to avoid circular imports
 
 	// Output format control (CLI-05, CLI-13)
 	Verbose                bool
@@ -85,6 +86,7 @@ func RunNonInteractive(ctx context.Context, params *NonInteractiveParams) error 
 		SessionID:            params.SessionID,
 		CmdRegistry:          params.CmdRegistry,
 		ToolRules:            params.ToolRules,
+		MCPManager:           params.MCPManager,
 	}
 
 	switch format {

@@ -33,6 +33,7 @@ type REPLParams struct {
 	Model                string
 	CmdRegistry          *commands.CommandRegistry
 	ToolRules            *permissions.ToolPermissionRules
+	MCPManager           any // *mcp.Manager, typed as any to avoid circular imports
 }
 
 // LaunchREPL starts the interactive Bubble Tea REPL.
@@ -83,6 +84,7 @@ func LaunchREPL(ctx context.Context, params *REPLParams) error {
 					SessionID:            params.SessionID,
 					CmdRegistry:          params.CmdRegistry,
 					ToolRules:            params.ToolRules,
+					MCPManager:           params.MCPManager,
 					Program:              p,
 					PermissionCh:         permissionCh,
 				}

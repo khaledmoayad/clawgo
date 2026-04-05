@@ -39,6 +39,12 @@ type CommandContext struct {
 	ToolRegistry *tools.Registry
 	CmdRegistry  *CommandRegistry // Self-reference for /help to list commands
 	SystemPrompt string
+
+	// MCPManager holds a reference to the live MCP Manager (typed as any
+	// to avoid circular imports between commands and mcp packages).
+	// Command implementations that need MCP access type-assert this to
+	// *mcp.Manager.
+	MCPManager any
 }
 
 // Command defines the contract for all slash commands.
