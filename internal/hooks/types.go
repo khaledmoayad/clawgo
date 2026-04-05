@@ -4,8 +4,6 @@
 // after file writes or auditing before bash commands.
 package hooks
 
-import "encoding/json"
-
 // HookEvent identifies the lifecycle point at which a hook fires.
 // Values match the TypeScript HOOK_EVENTS array exactly.
 type HookEvent string
@@ -101,15 +99,6 @@ type HookMatcher struct {
 // Not all events need entries -- missing events simply have no hooks.
 type HooksConfig map[HookEvent][]HookMatcher
 
-// HookInput carries contextual data passed to hook commands.
-// Serialized as JSON and provided to hooks via environment variables.
-type HookInput struct {
-	ToolName    string          `json:"tool_name,omitempty"`
-	ToolInput   json.RawMessage `json:"tool_input,omitempty"`
-	SessionID   string          `json:"session_id"`
-	ProjectRoot string          `json:"cwd"`
-}
-
 // HookResult captures the outcome of a single hook execution.
 type HookResult struct {
 	ExitCode int    `json:"exit_code"`
@@ -119,4 +108,8 @@ type HookResult struct {
 	// Blocked is true when a pre-hook returned non-zero exit code,
 	// signalling that the associated tool execution should be prevented.
 	Blocked bool `json:"blocked"`
+
+	// Output holds the parsed JSON output if the hook's stdout was valid
+	// JSON matching the hookJSONOutputSchema. Nil if stdout was plain text.
+	Output *HookJSONOutput `json:"output,omitempty"`
 }
