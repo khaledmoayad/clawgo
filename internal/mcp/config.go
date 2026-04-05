@@ -13,12 +13,17 @@ type settingsWrapper struct {
 
 // serverConfigRaw matches the per-server config shape in the map format.
 type serverConfigRaw struct {
-	Type    MCPTransportType  `json:"type"`
-	Command string            `json:"command,omitempty"`
-	Args    []string          `json:"args,omitempty"`
-	Env     map[string]string `json:"env,omitempty"`
-	URL     string            `json:"url,omitempty"`
-	Headers map[string]string `json:"headers,omitempty"`
+	Type                 MCPTransportType  `json:"type"`
+	Command              string            `json:"command,omitempty"`
+	Args                 []string          `json:"args,omitempty"`
+	Env                  map[string]string `json:"env,omitempty"`
+	URL                  string            `json:"url,omitempty"`
+	Headers              map[string]string `json:"headers,omitempty"`
+	Disabled             bool              `json:"disabled,omitempty"`
+	MaxReconnectAttempts int               `json:"maxReconnectAttempts,omitempty"`
+	TimeoutMS            int               `json:"timeoutMs,omitempty"`
+	OAuth                *MCPOAuthConfig   `json:"oauth,omitempty"`
+	HeadersHelper        string            `json:"headersHelper,omitempty"`
 }
 
 // LoadMCPConfig parses the mcpServers field from settings JSON into a slice
@@ -40,13 +45,18 @@ func LoadMCPConfig(configJSON json.RawMessage) ([]MCPServerConfig, error) {
 		configs := make([]MCPServerConfig, 0, len(serverMap))
 		for name, raw := range serverMap {
 			configs = append(configs, MCPServerConfig{
-				Name:    name,
-				Type:    raw.Type,
-				Command: raw.Command,
-				Args:    raw.Args,
-				Env:     raw.Env,
-				URL:     raw.URL,
-				Headers: raw.Headers,
+				Name:                 name,
+				Type:                 raw.Type,
+				Command:              raw.Command,
+				Args:                 raw.Args,
+				Env:                  raw.Env,
+				URL:                  raw.URL,
+				Headers:              raw.Headers,
+				Disabled:             raw.Disabled,
+				MaxReconnectAttempts: raw.MaxReconnectAttempts,
+				TimeoutMS:            raw.TimeoutMS,
+				OAuth:                raw.OAuth,
+				HeadersHelper:        raw.HeadersHelper,
 			})
 		}
 		// Sort by name for deterministic ordering
