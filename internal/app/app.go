@@ -128,6 +128,7 @@ func BuildRegistry(client *api.Client) *tools.Registry {
 // RunParams holds parameters for the main Run entry point.
 // These are populated by the CLI layer from CLIFlags.
 type RunParams struct {
+	// Core flags
 	Model              string
 	PermissionMode     string
 	Resume             bool
@@ -140,12 +141,76 @@ type RunParams struct {
 	DisallowedTools    []string
 	Prompt             string
 	Version            string
+
+	// CLI-01: Print mode
+	Print bool
+
+	// CLI-02: Session flags
+	Continue             bool
+	ForkSession          bool
+	ResumeSessionAt      string
+	Name                 string
+	Prefill              string
+	FromPR               string
+	NoSessionPersistence bool
+
+	// CLI-03: Model/performance
+	Effort        string
+	Thinking      string
+	MaxBudgetUSD  float64
+	FallbackModel string
+	Betas         []string
+	TaskBudget    int
+
+	// CLI-04: Debug
+	Debug     bool
+	DebugFile string
+	Bare      bool
+
+	// CLI-05: Output
+	JSONSchema             string
+	InputFormat            string
+	IncludeHookEvents      bool
+	IncludePartialMessages bool
+	ReplayUserMessages     bool
+
+	// CLI-06: System prompt
+	SystemPromptFile       string
+	AppendSystemPromptFile string
+
+	// CLI-07: Agent
+	Agent            string
+	Agents           string
+	AgentID          string
+	AgentName        string
+	PlanModeRequired bool
+	Proactive        bool
+	Brief            bool
+
+	// CLI-08: Permissions
+	DangerouslySkipPermissions      bool
+	AllowDangerouslySkipPermissions bool
+	PermissionPromptTool            string
+
+	// CLI-09: Tool/plugin/settings
+	Tools                []string
+	StrictMCPConfig      bool
+	PluginDir            []string
+	DisableSlashCommands bool
+	Settings             string
+	AddDir               []string
+	IDE                  bool
 }
 
 // Run is the main application entry point called from CLI.
 // It initializes all subsystems and dispatches to either interactive
 // REPL mode or non-interactive single-query mode.
 func Run(ctx context.Context, params *RunParams, cfg *config.Config, settings *config.Settings) error {
+	// --bare: set CLAUDE_CODE_SIMPLE=1 so all simple-mode gates fire
+	if params.Bare {
+		os.Setenv("CLAUDE_CODE_SIMPLE", "1")
+	}
+
 	// 1. Resolve API key
 	apiKey := config.ResolveAPIKey(cfg)
 	if apiKey == "" {
@@ -169,6 +234,11 @@ func Run(ctx context.Context, params *RunParams, cfg *config.Config, settings *c
 		client.Model = settings.Model
 	}
 
+	// --fallback-model: override the auto-detected fallback
+	if params.FallbackModel != "" {
+		client.FallbackModel = params.FallbackModel
+	}
+
 	// 3. Build tool registry (37 tools)
 	registry := BuildRegistry(client)
 
@@ -180,6 +250,11 @@ func Run(ctx context.Context, params *RunParams, cfg *config.Config, settings *c
 	mode := permissions.ModeFromString(params.PermissionMode)
 	if settings.PermissionMode != "" && params.PermissionMode == "default" {
 		mode = permissions.ModeFromString(settings.PermissionMode)
+	}
+
+	// --dangerously-skip-permissions: force bypass mode
+	if params.DangerouslySkipPermissions {
+		mode = permissions.ModeBypass
 	}
 
 	// Merge allowed/disallowed tools from params and settings
@@ -212,9 +287,30 @@ func Run(ctx context.Context, params *RunParams, cfg *config.Config, settings *c
 	homeDir, _ := os.UserHomeDir()
 
 	// 8. Build effective system prompt using the multi-section prompt builder (SYS-01, SYS-04)
+	//
+	// --system-prompt-file: read file contents as system prompt override
+	systemPromptOverride := params.SystemPrompt
+	if params.SystemPromptFile != "" {
+		data, err := os.ReadFile(params.SystemPromptFile)
+		if err != nil {
+			return fmt.Errorf("failed to read --system-prompt-file %q: %w", params.SystemPromptFile, err)
+		}
+		systemPromptOverride = string(data)
+	}
+
+	// --append-system-prompt-file: read file contents to append
+	appendPrompt := params.AppendSystemPrompt
+	if params.AppendSystemPromptFile != "" {
+		data, err := os.ReadFile(params.AppendSystemPromptFile)
+		if err != nil {
+			return fmt.Errorf("failed to read --append-system-prompt-file %q: %w", params.AppendSystemPromptFile, err)
+		}
+		appendPrompt = string(data)
+	}
+
 	promptCfg := systemprompt.EffectivePromptConfig{
-		OverridePrompt: params.SystemPrompt,       // --system-prompt flag
-		AppendPrompt:   params.AppendSystemPrompt,  // --append-system-prompt flag
+		OverridePrompt: systemPromptOverride,
+		AppendPrompt:   appendPrompt,
 		MemoryWorkDir:  workDir,
 		MemoryHomeDir:  homeDir,
 	}
@@ -229,7 +325,7 @@ func Run(ctx context.Context, params *RunParams, cfg *config.Config, settings *c
 		},
 		KeepCodingInstr: true,
 		UseGlobalCache:  true,
-		SimpleMode:      os.Getenv("CLAUDE_CODE_SIMPLE") == "true",
+		SimpleMode:      os.Getenv("CLAUDE_CODE_SIMPLE") == "true" || os.Getenv("CLAUDE_CODE_SIMPLE") == "1",
 	}
 
 	// Fill git info if available
@@ -247,13 +343,30 @@ func Run(ctx context.Context, params *RunParams, cfg *config.Config, settings *c
 	sessionID := params.SessionID
 	var existingMessages []api.Message
 
-	if params.Resume {
+	// --continue: resume the most recent conversation (like Resume with no session ID)
+	if params.Continue {
+		entries, sid, err := session.Resume(workDir, "")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not resume latest session: %v\n", err)
+		} else {
+			sessionID = sid
+			existingMessages = session.EntriesToMessages(entries)
+			// --fork-session: use a new session ID instead of reusing the original
+			if params.ForkSession {
+				sessionID = session.NewSessionID()
+			}
+		}
+	} else if params.Resume {
 		entries, sid, err := session.Resume(workDir, sessionID)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: could not resume session: %v\n", err)
 		} else {
 			sessionID = sid
 			existingMessages = session.EntriesToMessages(entries)
+			// --fork-session: use a new session ID instead of reusing the original
+			if params.ForkSession {
+				sessionID = session.NewSessionID()
+			}
 		}
 	}
 	if sessionID == "" {
@@ -265,12 +378,27 @@ func Run(ctx context.Context, params *RunParams, cfg *config.Config, settings *c
 		Provider:     api.GetProvider(),
 		CacheControl: true,
 	}
-	// Enable adaptive thinking by default (can be overridden by env var)
-	if os.Getenv("CLAUDE_CODE_DISABLE_THINKING") != "true" {
-		streamCfg.Thinking = &api.ThinkingConfig{
-			Adaptive: true,
+
+	// --effort: set effort level on stream config
+	if params.Effort != "" {
+		streamCfg.Effort = api.EffortLevel(params.Effort)
+	}
+
+	// --thinking: configure thinking mode
+	switch params.Thinking {
+	case "disabled":
+		streamCfg.Thinking = nil
+	case "enabled", "adaptive":
+		streamCfg.Thinking = &api.ThinkingConfig{Adaptive: true}
+	default:
+		// Default: enable adaptive thinking unless disabled by env var
+		if os.Getenv("CLAUDE_CODE_DISABLE_THINKING") != "true" {
+			streamCfg.Thinking = &api.ThinkingConfig{
+				Adaptive: true,
+			}
 		}
 	}
+
 	// Set request headers for correlation and identification
 	streamCfg.Headers = &api.RequestHeaders{
 		UserAgent: "ClawGo/" + params.Version,
@@ -278,7 +406,8 @@ func Run(ctx context.Context, params *RunParams, cfg *config.Config, settings *c
 	}
 
 	// 11. Dispatch to interactive or non-interactive mode
-	if params.Prompt != "" {
+	// --print or prompt arg triggers non-interactive mode
+	if params.Prompt != "" || params.Print {
 		return RunNonInteractive(ctx, &NonInteractiveParams{
 			Client:               client,
 			Registry:             registry,
