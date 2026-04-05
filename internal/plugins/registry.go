@@ -3,6 +3,9 @@ package plugins
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 
 	"github.com/khaledmoayad/clawgo/internal/hooks"
@@ -67,11 +70,104 @@ func (r *Registry) RegisterBuiltin(def *BuiltinPluginDefinition) {
 	r.builtins[def.Name] = def
 }
 
+// LoadAllOptions holds optional parameters for LoadAll.
+type LoadAllOptions struct {
+	// Policy is the enterprise plugin policy. Nil means no policy enforcement.
+	Policy *PluginPolicy
+
+	// MarketplaceSources lists marketplace sources to load plugins from.
+	// These are loaded in addition to repository-based plugins.
+	MarketplaceSources []MarketplaceSource
+}
+
 // LoadAll installs and loads all configured plugins from repositories,
 // merges them with built-in plugins, and stores the result in the registry.
 // The enabledPlugins map (from settings) controls which plugins are active.
-func (r *Registry) LoadAll(ctx context.Context, config *PluginConfig, enabledPlugins map[string]bool, cacheDir string) *PluginLoadResult {
+func (r *Registry) LoadAll(ctx context.Context, config *PluginConfig, enabledPlugins map[string]bool, cacheDir string, opts ...LoadAllOptions) *PluginLoadResult {
 	result := LoadPlugins(ctx, config, enabledPlugins, cacheDir)
+
+	// Extract options if provided
+	var opt LoadAllOptions
+	if len(opts) > 0 {
+		opt = opts[0]
+	}
+
+	// Load marketplace-sourced plugins
+	if len(opt.MarketplaceSources) > 0 {
+		for _, source := range opt.MarketplaceSources {
+			// Check policy before loading marketplace
+			if opt.Policy != nil {
+				if IsMarketplaceBlocked(opt.Policy, source) {
+					continue
+				}
+				if !IsMarketplaceAllowed(opt.Policy, source) {
+					continue
+				}
+			}
+
+			mk, err := LoadMarketplace(ctx, source, cacheDir)
+			if err != nil {
+				result.Errors = append(result.Errors, PluginError{
+					Type:    ErrNetworkError,
+					Source:  source.Name,
+					Message: fmt.Sprintf("failed to load marketplace %q: %v", source.Name, err),
+				})
+				continue
+			}
+
+			if mk.Manifest != nil {
+				for _, mp := range mk.Manifest.Plugins {
+					pluginID := mp.Name + "@" + source.Name
+
+					// Check if already loaded from repositories
+					alreadyLoaded := false
+					for _, p := range result.Enabled {
+						if p.Name == mp.Name {
+							alreadyLoaded = true
+							break
+						}
+					}
+					for _, p := range result.Disabled {
+						if p.Name == mp.Name {
+							alreadyLoaded = true
+							break
+						}
+					}
+					if alreadyLoaded {
+						continue
+					}
+
+					// Create a LoadedPlugin from marketplace entry
+					plugin := &LoadedPlugin{
+						Name: mp.Name,
+						Manifest: &PluginManifest{
+							Name:        mp.Name,
+							Description: mp.Description,
+							Version:     mp.Version,
+							Homepage:    mp.Homepage,
+							License:     mp.License,
+							Keywords:    mp.Keywords,
+						},
+						Source:     pluginID,
+						Repository: mp.Source,
+					}
+
+					// Determine enabled state
+					enabled, explicit := enabledPlugins[pluginID]
+					if explicit {
+						plugin.Enabled = enabled
+					}
+					// Marketplace plugins default to disabled until explicitly installed
+
+					if plugin.Enabled {
+						result.Enabled = append(result.Enabled, plugin)
+					} else {
+						result.Disabled = append(result.Disabled, plugin)
+					}
+				}
+			}
+		}
+	}
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -127,7 +223,66 @@ func (r *Registry) LoadAll(ctx context.Context, config *PluginConfig, enabledPlu
 		}
 	}
 
+	// Enforce policy on all non-builtin plugins
+	if opt.Policy != nil {
+		var stillEnabled []*LoadedPlugin
+		for _, p := range result.Enabled {
+			if err := EnforcePluginPolicy(opt.Policy, "enable", p); err != nil {
+				p.Enabled = false
+				result.Disabled = append(result.Disabled, p)
+				result.Errors = append(result.Errors, PluginError{
+					Type:    ErrGeneric,
+					Source:  p.Source,
+					Plugin:  p.Name,
+					Message: err.Error(),
+				})
+			} else {
+				stillEnabled = append(stillEnabled, p)
+			}
+		}
+		result.Enabled = stillEnabled
+	}
+
+	// Check dependencies after all plugins are loaded
+	for _, p := range result.Enabled {
+		missing := r.resolveDepsUnlocked(p)
+		for _, dep := range missing {
+			result.Errors = append(result.Errors, PluginError{
+				Type:    ErrGeneric,
+				Source:  p.Source,
+				Plugin:  p.Name,
+				Message: fmt.Sprintf("missing dependency: %s", dep),
+			})
+		}
+	}
+
 	return result
+}
+
+// resolveDepsUnlocked checks dependencies without acquiring the lock.
+// Must be called while holding r.mu (read or write).
+func (r *Registry) resolveDepsUnlocked(plugin *LoadedPlugin) []string {
+	if plugin == nil || plugin.Manifest == nil || len(plugin.Manifest.Dependencies) == 0 {
+		return nil
+	}
+
+	var missing []string
+	for _, dep := range plugin.Manifest.Dependencies {
+		found := false
+		for _, p := range r.plugins {
+			if !p.Enabled {
+				continue
+			}
+			if p.Name == dep || p.Source == dep {
+				found = true
+				break
+			}
+		}
+		if !found {
+			missing = append(missing, dep)
+		}
+	}
+	return missing
 }
 
 // GetEnabled returns all enabled plugins (user-installed and built-in).
@@ -220,4 +375,105 @@ func (r *Registry) GetMergedSkills() []*skills.Skill {
 		all = append(all, p.Skills...)
 	}
 	return all
+}
+
+// ResolveDependencies checks that all plugin dependencies are met.
+// Returns a list of missing dependency identifiers. An empty list means
+// all dependencies are satisfied.
+func (r *Registry) ResolveDependencies(plugin *LoadedPlugin) []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	if plugin == nil || plugin.Manifest == nil || len(plugin.Manifest.Dependencies) == 0 {
+		return nil
+	}
+
+	var missing []string
+	for _, dep := range plugin.Manifest.Dependencies {
+		found := false
+		for _, p := range r.plugins {
+			if !p.Enabled {
+				continue
+			}
+			// Match by plugin name (with or without @marketplace suffix)
+			if p.Name == dep || p.Source == dep {
+				found = true
+				break
+			}
+		}
+		if !found {
+			missing = append(missing, dep)
+		}
+	}
+	return missing
+}
+
+// SaveEnabledState persists the enabled state of a plugin to user settings.
+// It reads the current settings.json, updates enabledPlugins[pluginID], and
+// writes back atomically.
+func SaveEnabledState(configDir, pluginID string, enabled bool) error {
+	settingsPath := filepath.Join(configDir, "settings.json")
+
+	// Read existing settings
+	var settings map[string]json.RawMessage
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			settings = make(map[string]json.RawMessage)
+		} else {
+			return fmt.Errorf("failed to read settings: %w", err)
+		}
+	} else {
+		if err := json.Unmarshal(data, &settings); err != nil {
+			return fmt.Errorf("failed to parse settings: %w", err)
+		}
+	}
+
+	// Parse or create enabledPlugins map
+	enabledPlugins := make(map[string]json.RawMessage)
+	if raw, ok := settings["enabledPlugins"]; ok {
+		if err := json.Unmarshal(raw, &enabledPlugins); err != nil {
+			// If parsing fails, start fresh
+			enabledPlugins = make(map[string]json.RawMessage)
+		}
+	}
+
+	// Update the plugin state
+	val, _ := json.Marshal(enabled)
+	enabledPlugins[pluginID] = val
+
+	// Marshal back
+	epRaw, err := json.Marshal(enabledPlugins)
+	if err != nil {
+		return fmt.Errorf("failed to marshal enabledPlugins: %w", err)
+	}
+	settings["enabledPlugins"] = epRaw
+
+	// Write settings atomically
+	out, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal settings: %w", err)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
+		return fmt.Errorf("failed to create config directory: %w", err)
+	}
+
+	return os.WriteFile(settingsPath, out, 0o644)
+}
+
+// UninstallPlugin removes a plugin from the cache and disables it in settings.
+func UninstallPlugin(pluginID, cacheDir, configDir string) error {
+	// Remove plugin cache directory
+	// Plugin ID might be "name@marketplace" or a git source
+	dirName := sanitizeDirName(pluginID)
+	pluginCacheDir := filepath.Join(cacheDir, "plugins", dirName)
+	if _, err := os.Stat(pluginCacheDir); err == nil {
+		if err := os.RemoveAll(pluginCacheDir); err != nil {
+			return fmt.Errorf("failed to remove plugin cache: %w", err)
+		}
+	}
+
+	// Remove from enabledPlugins in settings
+	return SaveEnabledState(configDir, pluginID, false)
 }
