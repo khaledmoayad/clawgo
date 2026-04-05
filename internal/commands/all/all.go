@@ -1,4 +1,4 @@
-// Package all provides RegisterAll which registers all 44 external slash commands.
+// Package all provides RegisterAll which registers all 53 external slash commands.
 // This lives in a separate sub-package to avoid circular imports between the
 // commands package and individual command sub-packages.
 package all
@@ -8,8 +8,10 @@ import (
 	"github.com/khaledmoayad/clawgo/internal/commands/adddir"
 	"github.com/khaledmoayad/clawgo/internal/commands/agents"
 	"github.com/khaledmoayad/clawgo/internal/commands/branch"
+	"github.com/khaledmoayad/clawgo/internal/commands/breakcache"
 	"github.com/khaledmoayad/clawgo/internal/commands/clear"
 	"github.com/khaledmoayad/clawgo/internal/commands/color"
+	"github.com/khaledmoayad/clawgo/internal/commands/commit"
 	"github.com/khaledmoayad/clawgo/internal/commands/compact"
 	"github.com/khaledmoayad/clawgo/internal/commands/config"
 	"github.com/khaledmoayad/clawgo/internal/commands/context"
@@ -29,22 +31,29 @@ import (
 	"github.com/khaledmoayad/clawgo/internal/commands/help"
 	"github.com/khaledmoayad/clawgo/internal/commands/hooks"
 	"github.com/khaledmoayad/clawgo/internal/commands/ide"
+	"github.com/khaledmoayad/clawgo/internal/commands/initcmd"
 	"github.com/khaledmoayad/clawgo/internal/commands/keybindings"
 	"github.com/khaledmoayad/clawgo/internal/commands/login"
 	"github.com/khaledmoayad/clawgo/internal/commands/logout"
 	"github.com/khaledmoayad/clawgo/internal/commands/mcp"
 	"github.com/khaledmoayad/clawgo/internal/commands/memory"
 	"github.com/khaledmoayad/clawgo/internal/commands/model"
+	"github.com/khaledmoayad/clawgo/internal/commands/onboarding"
+	"github.com/khaledmoayad/clawgo/internal/commands/outputstyle"
 	"github.com/khaledmoayad/clawgo/internal/commands/permissions"
 	"github.com/khaledmoayad/clawgo/internal/commands/plan"
 	"github.com/khaledmoayad/clawgo/internal/commands/plugin"
+	"github.com/khaledmoayad/clawgo/internal/commands/rename"
 	"github.com/khaledmoayad/clawgo/internal/commands/resume"
 	"github.com/khaledmoayad/clawgo/internal/commands/review"
 	"github.com/khaledmoayad/clawgo/internal/commands/rewind"
+	"github.com/khaledmoayad/clawgo/internal/commands/sandbox"
 	"github.com/khaledmoayad/clawgo/internal/commands/session"
+	"github.com/khaledmoayad/clawgo/internal/commands/share"
 	"github.com/khaledmoayad/clawgo/internal/commands/skills"
 	"github.com/khaledmoayad/clawgo/internal/commands/stats"
 	"github.com/khaledmoayad/clawgo/internal/commands/status"
+	"github.com/khaledmoayad/clawgo/internal/commands/summary"
 	"github.com/khaledmoayad/clawgo/internal/commands/tag"
 	"github.com/khaledmoayad/clawgo/internal/commands/tasks"
 	"github.com/khaledmoayad/clawgo/internal/commands/theme"
@@ -54,7 +63,7 @@ import (
 	"github.com/khaledmoayad/clawgo/internal/commands/vim"
 )
 
-// RegisterAll registers all 44 external slash commands into the given registry.
+// RegisterAll registers all 53 external slash commands into the given registry.
 // Commands are registered in a logical order: core first, then alphabetical.
 func RegisterAll(registry *commands.CommandRegistry) {
 	// Core commands (11)
@@ -70,11 +79,13 @@ func RegisterAll(registry *commands.CommandRegistry) {
 	registry.Register(vim.New())
 	registry.Register(theme.New())
 
-	// Additional commands (33) - alphabetical
+	// Additional commands (42) - alphabetical
 	registry.Register(adddir.New())
 	registry.Register(agents.New())
 	registry.Register(branch.New())
+	registry.Register(breakcache.New())
 	registry.Register(color.New())
+	registry.Register(commit.New())
 	registry.Register(context.New())
 	registry.Register(copy.New())
 	registry.Register(debug.New())
@@ -89,19 +100,26 @@ func RegisterAll(registry *commands.CommandRegistry) {
 	registry.Register(githubactions.New())
 	registry.Register(hooks.New())
 	registry.Register(ide.New())
+	registry.Register(initcmd.New())
 	registry.Register(keybindings.New())
 	registry.Register(login.New())
 	registry.Register(logout.New())
 	registry.Register(mcp.New())
 	registry.Register(memory.New())
+	registry.Register(onboarding.New())
+	registry.Register(outputstyle.New())
 	registry.Register(plan.New())
 	registry.Register(plugin.New())
+	registry.Register(rename.New())
 	registry.Register(resume.New())
 	registry.Register(review.New())
 	registry.Register(rewind.New())
+	registry.Register(sandbox.New())
 	registry.Register(session.New())
+	registry.Register(share.New())
 	registry.Register(skills.New())
 	registry.Register(stats.New())
+	registry.Register(summary.New())
 	registry.Register(tag.New())
 	registry.Register(tasks.New())
 	registry.Register(upgrade.New())
