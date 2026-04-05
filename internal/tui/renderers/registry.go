@@ -97,6 +97,18 @@ func NewRegistry() *RendererRegistry {
 	r.Register("mcp_tool_result", RenderMCPToolResult)
 	r.Register("mcp_server_list", RenderMCPServerList)
 
+	// Domain renderers: task, cost, error (from task.go, cost.go, error.go)
+	r.Register("task_status", RenderTaskStatus)
+	r.Register("background_task", RenderBackgroundTask)
+	r.Register("task_assignment_detail", RenderTaskAssignmentDetail)
+	r.Register("cost_summary", RenderCostSummary)
+	r.Register("token_usage", RenderTokenUsage)
+	r.Register("api_error", RenderAPIError)
+	r.Register("tool_execution_error", RenderToolExecutionError)
+	r.Register("auth_error", RenderAuthError)
+	r.Register("network_error", RenderNetworkError)
+	r.Register("validation_error", RenderValidationError)
+
 	return r
 }
 
