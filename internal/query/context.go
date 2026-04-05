@@ -16,16 +16,17 @@ import (
 
 // LoopParams configures the agentic conversation loop.
 type LoopParams struct {
-	Client       *api.Client
-	Registry     *tools.Registry
-	PermCtx      *permissions.PermissionContext
-	CostTracker  *cost.Tracker
-	Messages     []api.Message  // Conversation history
-	SystemPrompt string         // System prompt to use
-	MaxTurns     int            // 0 = unlimited
-	WorkingDir   string
-	ProjectRoot  string
-	SessionID    string
+	Client               *api.Client
+	Registry             *tools.Registry
+	PermCtx              *permissions.PermissionContext
+	CostTracker          *cost.Tracker
+	Messages             []api.Message  // Conversation history
+	SystemPromptSections []string       // Multi-section system prompt (sent as separate content blocks)
+	SystemPrompt         string         // Joined system prompt string (for compact, backward compat)
+	MaxTurns             int            // 0 = unlimited
+	WorkingDir           string
+	ProjectRoot          string
+	SessionID            string
 
 	// Command registry for slash command dispatch
 	CmdRegistry *commands.CommandRegistry

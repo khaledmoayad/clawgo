@@ -10,6 +10,7 @@ import (
 	"github.com/khaledmoayad/clawgo/internal/compact"
 	"github.com/khaledmoayad/clawgo/internal/cost"
 	"github.com/khaledmoayad/clawgo/internal/permissions"
+	"github.com/khaledmoayad/clawgo/internal/systemprompt"
 	"github.com/khaledmoayad/clawgo/internal/tools"
 	"github.com/khaledmoayad/clawgo/internal/tui"
 )
@@ -135,6 +136,8 @@ func RunLoop(ctx context.Context, params *LoopParams) error {
 }
 
 // buildRequest creates the API request from loop params.
+// System prompt sections are converted to separate TextBlockParam entries,
+// filtering out the DynamicBoundaryMarker and empty sections.
 func buildRequest(params *LoopParams) anthropic.MessageNewParams {
 	// Convert messages to API params
 	msgParams := make([]anthropic.MessageParam, 0, len(params.Messages))
@@ -148,7 +151,23 @@ func buildRequest(params *LoopParams) anthropic.MessageNewParams {
 		Messages:  msgParams,
 	}
 
-	if params.SystemPrompt != "" {
+	// Build system content blocks from multi-section prompt
+	if len(params.SystemPromptSections) > 0 {
+		var systemBlocks []anthropic.TextBlockParam
+		for _, section := range params.SystemPromptSections {
+			// Skip the boundary marker (used for caching logic, not sent to API)
+			if section == systemprompt.DynamicBoundaryMarker {
+				continue
+			}
+			if section != "" {
+				systemBlocks = append(systemBlocks, anthropic.TextBlockParam{Text: section})
+			}
+		}
+		if len(systemBlocks) > 0 {
+			req.System = systemBlocks
+		}
+	} else if params.SystemPrompt != "" {
+		// Fallback: single string system prompt (backward compatibility)
 		req.System = []anthropic.TextBlockParam{
 			{Text: params.SystemPrompt},
 		}

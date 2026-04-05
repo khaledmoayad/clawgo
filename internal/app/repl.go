@@ -17,20 +17,21 @@ import (
 
 // REPLParams holds all parameters needed to launch the interactive REPL.
 type REPLParams struct {
-	Client       *api.Client
-	Registry     *tools.Registry
-	PermCtx      *permissions.PermissionContext
-	CostTracker  *cost.Tracker
-	Messages     []api.Message
-	SystemPrompt string
-	MaxTurns     int
-	WorkingDir   string
-	ProjectRoot  string
-	SessionID    string
-	Version      string
-	Model        string
-	CmdRegistry  *commands.CommandRegistry
-	ToolRules    *permissions.ToolPermissionRules
+	Client               *api.Client
+	Registry             *tools.Registry
+	PermCtx              *permissions.PermissionContext
+	CostTracker          *cost.Tracker
+	Messages             []api.Message
+	SystemPromptSections []string // Multi-section system prompt (sent as separate content blocks)
+	SystemPrompt         string   // Joined system prompt string (for commands, compact)
+	MaxTurns             int
+	WorkingDir           string
+	ProjectRoot          string
+	SessionID            string
+	Version              string
+	Model                string
+	CmdRegistry          *commands.CommandRegistry
+	ToolRules            *permissions.ToolPermissionRules
 }
 
 // LaunchREPL starts the interactive Bubble Tea REPL.
@@ -67,20 +68,21 @@ func LaunchREPL(ctx context.Context, params *REPLParams) error {
 			// Run query loop in goroutine
 			go func() {
 				loopParams := &query.LoopParams{
-					Client:       params.Client,
-					Registry:     params.Registry,
-					PermCtx:      params.PermCtx,
-					CostTracker:  params.CostTracker,
-					Messages:     params.Messages,
-					SystemPrompt: params.SystemPrompt,
-					MaxTurns:     params.MaxTurns,
-					WorkingDir:   params.WorkingDir,
-					ProjectRoot:  params.ProjectRoot,
-					SessionID:    params.SessionID,
-					CmdRegistry:  params.CmdRegistry,
-					ToolRules:    params.ToolRules,
-					Program:      p,
-					PermissionCh: permissionCh,
+					Client:               params.Client,
+					Registry:             params.Registry,
+					PermCtx:              params.PermCtx,
+					CostTracker:          params.CostTracker,
+					Messages:             params.Messages,
+					SystemPromptSections: params.SystemPromptSections,
+					SystemPrompt:         params.SystemPrompt,
+					MaxTurns:             params.MaxTurns,
+					WorkingDir:           params.WorkingDir,
+					ProjectRoot:          params.ProjectRoot,
+					SessionID:            params.SessionID,
+					CmdRegistry:          params.CmdRegistry,
+					ToolRules:            params.ToolRules,
+					Program:              p,
+					PermissionCh:         permissionCh,
 				}
 				err := query.RunLoop(ctx, loopParams)
 				if err != nil {

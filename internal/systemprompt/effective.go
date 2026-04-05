@@ -19,6 +19,9 @@ type EffectivePromptConfig struct {
 	CustomPrompt      string // Custom prompt from settings
 	AppendPrompt      string // --append-system-prompt (always appended)
 
+	// Base config for the default system prompt path (env info, simple mode, etc.)
+	BaseConfig SystemPromptConfig
+
 	// Dynamic section inputs
 	Language        string
 	OutputStyle     string
@@ -57,6 +60,11 @@ func BuildEffectiveSystemPrompt(cfg EffectivePromptConfig) []string {
 		return []string{cfg.OverridePrompt}
 	}
 
+	// Simple mode returns a minimal prompt (via BaseConfig)
+	if cfg.BaseConfig.SimpleMode {
+		return GetSystemPrompt(cfg.BaseConfig)
+	}
+
 	var base []string
 
 	switch {
@@ -67,11 +75,16 @@ func BuildEffectiveSystemPrompt(cfg EffectivePromptConfig) []string {
 	case cfg.CustomPrompt != "":
 		base = []string{cfg.CustomPrompt}
 	default:
-		// Default path: use the static section generators
-		base = getDefaultSections()
+		// Default path: use the static section generators with BaseConfig
+		base = GetStaticSections(cfg.BaseConfig)
 	}
 
-	// Append dynamic sections
+	// Boundary marker for prompt caching (SYS-07)
+	if cfg.BaseConfig.UseGlobalCache {
+		base = append(base, DynamicBoundaryMarker)
+	}
+
+	// Append dynamic sections (env info, memory, language, MCP, etc.)
 	dynamic := ResolveDynamicSections(cfg)
 	result := make([]string, 0, len(base)+len(dynamic)+1)
 	result = append(result, base...)
@@ -85,29 +98,9 @@ func BuildEffectiveSystemPrompt(cfg EffectivePromptConfig) []string {
 	return result
 }
 
-// getDefaultSections returns the static system prompt sections in order.
-// These match the sections from getSystemPrompt() in Claude Code's
-// constants/prompts.ts.
-func getDefaultSections() []string {
-	sections := []string{
-		GetIntroSection(),
-		GetSystemSection(),
-		GetDoingTasksSection(),
-		GetActionsSection(),
-		GetUsingToolsSection(),
-		GetToneStyleSection(),
-		GetOutputEfficiencySection(),
-	}
-
-	// Filter out any empty sections
-	var result []string
-	for _, s := range sections {
-		if s != "" {
-			result = append(result, s)
-		}
-	}
-	return result
-}
+// Note: getDefaultSections() was removed -- BuildEffectiveSystemPrompt now
+// delegates to GetStaticSections(cfg.BaseConfig) for the default path,
+// which respects KeepCodingInstr and other BaseConfig options.
 
 // ResolveDynamicSections assembles the dynamic system prompt sections from
 // the config. These sections are session-specific and change per turn.
@@ -130,6 +123,16 @@ func getDefaultSections() []string {
 //  10. MCP instructions (LAST -- cache-breaking)
 func ResolveDynamicSections(cfg EffectivePromptConfig) []string {
 	var sections []string
+
+	// Session guidance
+	if guidance := GetSessionGuidanceSection(); guidance != "" {
+		sections = append(sections, guidance)
+	}
+
+	// Environment info (platform, shell, model, git, working dir)
+	if envInfo := ComputeEnvInfo(cfg.BaseConfig.EnvInfo); envInfo != "" {
+		sections = append(sections, envInfo)
+	}
 
 	// Memory (CLAUDE.md content)
 	if mem := LoadMemoryPromptSection(cfg.MemoryWorkDir, cfg.MemoryHomeDir); mem != "" {

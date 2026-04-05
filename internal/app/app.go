@@ -8,15 +8,18 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"runtime"
+	"strings"
 
 	"github.com/khaledmoayad/clawgo/internal/api"
-	"github.com/khaledmoayad/clawgo/internal/claudemd"
 	"github.com/khaledmoayad/clawgo/internal/commands"
 	"github.com/khaledmoayad/clawgo/internal/commands/all"
 	"github.com/khaledmoayad/clawgo/internal/config"
 	"github.com/khaledmoayad/clawgo/internal/cost"
+	"github.com/khaledmoayad/clawgo/internal/git"
 	"github.com/khaledmoayad/clawgo/internal/permissions"
 	"github.com/khaledmoayad/clawgo/internal/session"
+	"github.com/khaledmoayad/clawgo/internal/systemprompt"
 	"github.com/khaledmoayad/clawgo/internal/tools"
 	"github.com/khaledmoayad/clawgo/internal/tools/agent"
 	"github.com/khaledmoayad/clawgo/internal/tools/askuser"
@@ -125,17 +128,18 @@ func BuildRegistry(client *api.Client) *tools.Registry {
 // RunParams holds parameters for the main Run entry point.
 // These are populated by the CLI layer from CLIFlags.
 type RunParams struct {
-	Model           string
-	PermissionMode  string
-	Resume          bool
-	SessionID       string
-	MaxTurns        int
-	SystemPrompt    string
-	OutputFormat    string
-	AllowedTools    []string
-	DisallowedTools []string
-	Prompt          string
-	Version         string
+	Model              string
+	PermissionMode     string
+	Resume             bool
+	SessionID          string
+	MaxTurns           int
+	SystemPrompt       string // --system-prompt flag (overrides default prompt)
+	AppendSystemPrompt string // --append-system-prompt flag (appended after default)
+	OutputFormat       string
+	AllowedTools       []string
+	DisallowedTools    []string
+	Prompt             string
+	Version            string
 }
 
 // Run is the main application entry point called from CLI.
@@ -205,14 +209,39 @@ func Run(ctx context.Context, params *RunParams, cfg *config.Config, settings *c
 
 	// 7. Determine working directory
 	workDir, _ := os.Getwd()
-
-	// 8. Load CLAUDE.md files (CTX-04)
 	homeDir, _ := os.UserHomeDir()
-	memoryFiles, _ := claudemd.LoadMemoryFiles(workDir, homeDir)
-	systemPrompt := params.SystemPrompt
-	for _, mf := range memoryFiles {
-		systemPrompt += "\n\n" + mf.Content
+
+	// 8. Build effective system prompt using the multi-section prompt builder (SYS-01, SYS-04)
+	promptCfg := systemprompt.EffectivePromptConfig{
+		OverridePrompt: params.SystemPrompt,       // --system-prompt flag
+		AppendPrompt:   params.AppendSystemPrompt,  // --append-system-prompt flag
+		MemoryWorkDir:  workDir,
+		MemoryHomeDir:  homeDir,
 	}
+
+	// Fill environment info for dynamic sections
+	promptCfg.BaseConfig = systemprompt.SystemPromptConfig{
+		EnvInfo: systemprompt.EnvInfoConfig{
+			WorkDir:  workDir,
+			Platform: runtime.GOOS,
+			Shell:    os.Getenv("SHELL"),
+			ModelID:  client.Model,
+		},
+		KeepCodingInstr: true,
+		UseGlobalCache:  true,
+		SimpleMode:      os.Getenv("CLAUDE_CODE_SIMPLE") == "true",
+	}
+
+	// Fill git info if available
+	if gitInfo, err := git.Status(context.Background(), workDir); err == nil {
+		promptCfg.BaseConfig.EnvInfo.IsGitRepo = true
+		_ = gitInfo // Branch info included in IsGitRepo flag for env section
+	}
+
+	systemPromptSections := systemprompt.BuildEffectiveSystemPrompt(promptCfg)
+
+	// Also compute a joined string for subsystems that need a single string (compact, commands)
+	systemPromptJoined := strings.Join(systemPromptSections, "\n\n")
 
 	// 9. Session setup
 	sessionID := params.SessionID
@@ -234,36 +263,38 @@ func Run(ctx context.Context, params *RunParams, cfg *config.Config, settings *c
 	// 10. Dispatch to interactive or non-interactive mode
 	if params.Prompt != "" {
 		return RunNonInteractive(ctx, &NonInteractiveParams{
-			Client:       client,
-			Registry:     registry,
-			PermCtx:      permCtx,
-			CostTracker:  costTracker,
-			Messages:     existingMessages,
-			SystemPrompt: systemPrompt,
-			MaxTurns:     params.MaxTurns,
-			WorkingDir:   workDir,
-			SessionID:    sessionID,
-			Prompt:       params.Prompt,
-			OutputFormat: params.OutputFormat,
-			CmdRegistry:  cmdRegistry,
-			ToolRules:    toolRules,
+			Client:               client,
+			Registry:             registry,
+			PermCtx:              permCtx,
+			CostTracker:          costTracker,
+			Messages:             existingMessages,
+			SystemPromptSections: systemPromptSections,
+			SystemPrompt:         systemPromptJoined,
+			MaxTurns:             params.MaxTurns,
+			WorkingDir:           workDir,
+			SessionID:            sessionID,
+			Prompt:               params.Prompt,
+			OutputFormat:         params.OutputFormat,
+			CmdRegistry:          cmdRegistry,
+			ToolRules:            toolRules,
 		})
 	}
 
 	return LaunchREPL(ctx, &REPLParams{
-		Client:       client,
-		Registry:     registry,
-		PermCtx:      permCtx,
-		CostTracker:  costTracker,
-		Messages:     existingMessages,
-		SystemPrompt: systemPrompt,
-		MaxTurns:     params.MaxTurns,
-		WorkingDir:   workDir,
-		ProjectRoot:  workDir,
-		SessionID:    sessionID,
-		Version:      params.Version,
-		Model:        client.Model,
-		CmdRegistry:  cmdRegistry,
-		ToolRules:    toolRules,
+		Client:               client,
+		Registry:             registry,
+		PermCtx:              permCtx,
+		CostTracker:          costTracker,
+		Messages:             existingMessages,
+		SystemPromptSections: systemPromptSections,
+		SystemPrompt:         systemPromptJoined,
+		MaxTurns:             params.MaxTurns,
+		WorkingDir:           workDir,
+		ProjectRoot:          workDir,
+		SessionID:            sessionID,
+		Version:              params.Version,
+		Model:                client.Model,
+		CmdRegistry:          cmdRegistry,
+		ToolRules:            toolRules,
 	})
 }

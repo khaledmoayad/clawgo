@@ -15,19 +15,20 @@ import (
 
 // NonInteractiveParams holds parameters for non-interactive single-query mode.
 type NonInteractiveParams struct {
-	Client       *api.Client
-	Registry     *tools.Registry
-	PermCtx      *permissions.PermissionContext
-	CostTracker  *cost.Tracker
-	Messages     []api.Message
-	SystemPrompt string
-	MaxTurns     int
-	WorkingDir   string
-	SessionID    string
-	Prompt       string
-	OutputFormat string // "text", "json", "stream-json"
-	CmdRegistry  *commands.CommandRegistry
-	ToolRules    *permissions.ToolPermissionRules
+	Client               *api.Client
+	Registry             *tools.Registry
+	PermCtx              *permissions.PermissionContext
+	CostTracker          *cost.Tracker
+	Messages             []api.Message
+	SystemPromptSections []string // Multi-section system prompt (sent as separate content blocks)
+	SystemPrompt         string   // Joined system prompt string (for compact)
+	MaxTurns             int
+	WorkingDir           string
+	SessionID            string
+	Prompt               string
+	OutputFormat         string // "text", "json", "stream-json"
+	CmdRegistry          *commands.CommandRegistry
+	ToolRules            *permissions.ToolPermissionRules
 }
 
 // RunNonInteractive executes a single query and prints the result.
@@ -38,17 +39,18 @@ func RunNonInteractive(ctx context.Context, params *NonInteractiveParams) error 
 
 	// For non-interactive, stream text tokens directly to stdout via TextCallback
 	loopParams := &query.LoopParams{
-		Client:       params.Client,
-		Registry:     params.Registry,
-		PermCtx:      params.PermCtx,
-		CostTracker:  params.CostTracker,
-		Messages:     params.Messages,
-		SystemPrompt: params.SystemPrompt,
-		MaxTurns:     params.MaxTurns,
-		WorkingDir:   params.WorkingDir,
-		SessionID:    params.SessionID,
-		CmdRegistry:  params.CmdRegistry,
-		ToolRules:    params.ToolRules,
+		Client:               params.Client,
+		Registry:             params.Registry,
+		PermCtx:              params.PermCtx,
+		CostTracker:          params.CostTracker,
+		Messages:             params.Messages,
+		SystemPromptSections: params.SystemPromptSections,
+		SystemPrompt:         params.SystemPrompt,
+		MaxTurns:             params.MaxTurns,
+		WorkingDir:           params.WorkingDir,
+		SessionID:            params.SessionID,
+		CmdRegistry:          params.CmdRegistry,
+		ToolRules:            params.ToolRules,
 		TextCallback: func(text string) { fmt.Print(text) }, // Stream text tokens directly to stdout
 		// No Program -- non-interactive mode
 		// No PermissionCh -- auto-approve or deny based on mode
