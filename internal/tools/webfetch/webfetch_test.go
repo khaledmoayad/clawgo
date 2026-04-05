@@ -190,8 +190,8 @@ func TestWebFetchToolHTTPError(t *testing.T) {
 }
 
 func TestWebFetchToolTruncation(t *testing.T) {
-	// Generate content larger than MaxResponseSize
-	bigContent := strings.Repeat("x", MaxResponseSize+1000)
+	// Generate content larger than MAX_MARKDOWN_LENGTH to test content-level truncation
+	bigContent := strings.Repeat("x", MAX_MARKDOWN_LENGTH+1000)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
 		fmt.Fprint(w, bigContent)
@@ -209,27 +209,27 @@ func TestWebFetchToolTruncation(t *testing.T) {
 
 	text := result.Content[0].Text
 	// The truncation message marker must appear
-	assert.Contains(t, text, "[truncated")
-	// The body portion should be no larger than MaxResponseSize; total text includes headers
-	assert.Less(t, len(text), MaxResponseSize+2048, "response should be truncated")
+	assert.Contains(t, text, "[Content truncated due to length...]")
+	// The body portion should be bounded by MAX_MARKDOWN_LENGTH plus header/footer text
+	assert.Less(t, len(text), MAX_MARKDOWN_LENGTH+2048, "response should be truncated")
 }
 
 func TestWebFetchToolRedirect(t *testing.T) {
-	finalServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	// Same-host redirect: path redirect within the same server (same host:port)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/redirect" {
+			http.Redirect(w, r, "/final", http.StatusFound)
+			return
+		}
 		w.Header().Set("Content-Type", "text/plain")
 		fmt.Fprint(w, "Final destination")
 	}))
-	defer finalServer.Close()
-
-	redirectServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, finalServer.URL, http.StatusFound)
-	}))
-	defer redirectServer.Close()
+	defer server.Close()
 
 	tool := New()
 	ctx := context.Background()
 	toolCtx := &tools.ToolUseContext{WorkingDir: "/tmp"}
-	input := makeInput(t, redirectServer.URL, "test")
+	input := makeInput(t, server.URL+"/redirect", "test")
 
 	result, err := tool.Call(ctx, input, toolCtx)
 	require.NoError(t, err)
