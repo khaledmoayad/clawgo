@@ -16,6 +16,12 @@ type SubmitMsg struct {
 	Text string
 }
 
+// ShellCommandMsg is sent when the user submits input prefixed with "!".
+// The Command field contains the shell command with the "!" prefix stripped.
+type ShellCommandMsg struct {
+	Command string
+}
+
 // PermissionRequestMsg asks the user to approve a tool use.
 type PermissionRequestMsg struct {
 	ToolName    string
@@ -80,4 +86,39 @@ type NotificationMsg struct {
 // ShowPermissionRulesMsg signals the TUI to open the permission rules panel.
 type ShowPermissionRulesMsg struct {
 	Rules []PermissionRuleEntry
+}
+
+// --- Wave 1 integration message types ---
+
+// ShowOverlayMsg triggers an overlay from anywhere in the TUI.
+// Type is one of "selector", "history", "search", "fullscreen".
+type ShowOverlayMsg struct {
+	Type string
+}
+
+// ShowHelpMsg triggers the help dialog.
+type ShowHelpMsg struct{}
+
+// SuggestionUpdateMsg triggers a suggestion refresh for the given input.
+type SuggestionUpdateMsg struct {
+	Input     string
+	CursorPos int
+}
+
+// ContextUpdateMsg updates the context usage displayed in the status line.
+type ContextUpdateMsg struct {
+	Percent int
+	Tokens  string
+}
+
+// ModelChangeMsg updates the model name displayed in the status line and header.
+type ModelChangeMsg struct {
+	Name string
+}
+
+// ToastMsg triggers a toast notification from anywhere in the TUI.
+// Level is "info", "warning", or "error".
+type ToastMsg struct {
+	Level   string
+	Message string
 }

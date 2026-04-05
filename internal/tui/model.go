@@ -62,10 +62,11 @@ type Model struct {
 	cmdRegistry *commands.CommandRegistry
 
 	// Callback functions for query loop integration (set by Plan 07).
-	OnSubmit      func(text string) tea.Cmd               // Called when user submits input
-	OnPermission  func(resp PermissionResponseMsg) tea.Cmd // Called on permission response
-	OnCompact     func() tea.Cmd                           // Called when /compact is executed
-	OnModelChange func(model string) tea.Cmd               // Called when /model changes the model
+	OnSubmit        func(text string) tea.Cmd               // Called when user submits input
+	OnPermission    func(resp PermissionResponseMsg) tea.Cmd // Called on permission response
+	OnCompact       func() tea.Cmd                           // Called when /compact is executed
+	OnModelChange   func(model string) tea.Cmd               // Called when /model changes the model
+	OnShellCommand  func(cmd string) tea.Cmd                 // Called when user submits a !shell command
 }
 
 // New creates a new TUI model.
@@ -176,6 +177,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.vim.Toggle()
 		m.input.SetVimNormal(m.vim.IsNormal())
 		return m, nil
+
+	case ShellCommandMsg:
+		// Shell command via ! prefix: display as user input and execute
+		m.output.AddMessage(DisplayMessage{Role: "user", Content: "$ " + msg.Command})
+		m.input.Reset()
+		m.state = StateStreaming
+		cmd := m.spinner.Start("Running shell command")
+		cmds = append(cmds, cmd)
+		if m.OnShellCommand != nil {
+			cmds = append(cmds, m.OnShellCommand(msg.Command))
+		}
+		return m, tea.Batch(cmds...)
 
 	case SubmitMsg:
 		// Check if input is a slash command

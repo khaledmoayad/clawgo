@@ -1,8 +1,12 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"os/exec"
+	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/khaledmoayad/clawgo/internal/api"
@@ -117,6 +121,13 @@ func LaunchREPL(ctx context.Context, params *REPLParams) error {
 			}
 			permissionCh <- result
 			return nil
+		}
+	}
+
+	// Wire OnShellCommand: executes shell commands from ! prefix input
+	model.OnShellCommand = func(command string) tea.Cmd {
+		return func() tea.Msg {
+			return executeShellCommand(command, params.WorkingDir, p)
 		}
 	}
 
@@ -236,5 +247,81 @@ func handleSlashCommand(input string, params *REPLParams, p *tea.Program) tea.Ms
 		return tui.StreamEventMsg{
 			Event: api.StreamEvent{Type: api.EventMessageComplete},
 		}
+	}
+}
+
+// shellTimeout is the maximum duration for ! shell commands.
+const shellTimeout = 30 * time.Second
+
+// executeShellCommand runs a shell command from the ! prefix and sends
+// the result back to the TUI as stream events. It runs synchronously
+// and returns a message when complete.
+func executeShellCommand(command, workDir string, p *tea.Program) tea.Msg {
+	ctx, cancel := context.WithTimeout(context.Background(), shellTimeout)
+	defer cancel()
+
+	if workDir == "" {
+		workDir = "."
+	}
+
+	cmd := exec.CommandContext(ctx, "sh", "-c", command)
+	cmd.Dir = workDir
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
+
+	// Build combined output
+	var output strings.Builder
+	if stdout.Len() > 0 {
+		output.WriteString(stdout.String())
+	}
+	if stderr.Len() > 0 {
+		if output.Len() > 0 {
+			output.WriteString("\n")
+		}
+		output.WriteString(stderr.String())
+	}
+
+	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			// Send timeout error
+			p.Send(tui.StreamEventMsg{
+				Event: api.StreamEvent{
+					Type: api.EventText,
+					Text: fmt.Sprintf("Shell command timed out after %s", shellTimeout),
+				},
+			})
+		} else {
+			// Show output + error
+			result := output.String()
+			if result == "" {
+				result = err.Error()
+			}
+			p.Send(tui.StreamEventMsg{
+				Event: api.StreamEvent{
+					Type: api.EventText,
+					Text: result,
+				},
+			})
+		}
+	} else {
+		result := output.String()
+		if result == "" {
+			result = "(no output)"
+		}
+		p.Send(tui.StreamEventMsg{
+			Event: api.StreamEvent{
+				Type: api.EventText,
+				Text: result,
+			},
+		})
+	}
+
+	// Signal completion
+	return tui.StreamEventMsg{
+		Event: api.StreamEvent{Type: api.EventMessageComplete},
 	}
 }

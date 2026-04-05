@@ -7,6 +7,30 @@ import (
 	"charm.land/bubbles/v2/textarea"
 )
 
+// ShellPrefix is the prefix character that triggers shell command execution.
+const ShellPrefix = "!"
+
+// IsShellCommand returns true if the input starts with "!" and has a non-empty command.
+func IsShellCommand(input string) bool {
+	trimmed := strings.TrimSpace(input)
+	if !strings.HasPrefix(trimmed, ShellPrefix) {
+		return false
+	}
+	// Must have something after the "!"
+	cmd := strings.TrimSpace(trimmed[1:])
+	return cmd != ""
+}
+
+// ParseShellCommand extracts the shell command from a "!"-prefixed input.
+// It strips the leading "!" and trims leading whitespace from the command.
+func ParseShellCommand(input string) string {
+	trimmed := strings.TrimSpace(input)
+	if !strings.HasPrefix(trimmed, ShellPrefix) {
+		return ""
+	}
+	return strings.TrimSpace(trimmed[1:])
+}
+
 // InputModel manages the multi-line prompt input area.
 type InputModel struct {
 	textarea     textarea.Model
@@ -40,6 +64,11 @@ func (m InputModel) Update(msg tea.Msg) (InputModel, tea.Cmd) {
 		if m.keys.IsSubmit(k) && !m.keys.IsNewLine(k) {
 			text := m.textarea.Value()
 			if strings.TrimSpace(text) != "" {
+				// Check for shell command prefix before submitting
+				if IsShellCommand(text) {
+					cmd := ParseShellCommand(text)
+					return m, func() tea.Msg { return ShellCommandMsg{Command: cmd} }
+				}
 				return m, func() tea.Msg { return SubmitMsg{Text: text} }
 			}
 			return m, nil
