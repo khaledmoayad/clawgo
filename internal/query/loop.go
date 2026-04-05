@@ -79,7 +79,10 @@ func RunLoop(ctx context.Context, params *LoopParams) error {
 		// Step 5: Start memory prefetch (fire-and-forget, Plan 05)
 		memPrefetch := StartMemoryPrefetch(ctx, state.Messages, params.ProjectRoot)
 
-		// Step 6: Enforce thinking rules before API call (Plan 04)
+		// Step 6: Normalize messages for API (alternating roles, orphan cleanup, etc.)
+		state.Messages = NormalizeMessagesForAPI(state.Messages, params.Registry.Names())
+
+		// Step 7: Enforce thinking rules before API call (Plan 04)
 		messagesForQuery := EnforceThinkingRules(state.Messages)
 
 		// === Build and send API request ===
