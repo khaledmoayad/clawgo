@@ -36,6 +36,12 @@ type ToolUseContext struct {
 	PermCtx        *permissions.PermissionContext
 	TaskStore      *tasks.Store
 	FileStateCache *filestate.FileStateCache
+
+	// MCPManager holds a reference to the MCP Manager (typed as any to
+	// avoid circular imports between tools and mcp packages). Tool
+	// implementations that need MCP access type-assert this to
+	// *mcp.Manager.
+	MCPManager any
 }
 
 // ContentBlock for tool results (text or image content).

@@ -1,12 +1,14 @@
 // Package readmcpresource implements the ReadMcpResource tool.
-// This is a stub that will be fully implemented in Phase 5 when the MCP client is available.
+// It reads a specific resource from a connected MCP server by URI.
 package readmcpresource
 
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 
+	"github.com/khaledmoayad/clawgo/internal/mcp"
 	"github.com/khaledmoayad/clawgo/internal/permissions"
 	"github.com/khaledmoayad/clawgo/internal/tools"
 )
@@ -34,7 +36,7 @@ func (t *ReadMcpResourceTool) CheckPermissions(_ context.Context, _ json.RawMess
 	return permissions.CheckPermission("ReadMcpResourceTool", true, permCtx), nil
 }
 
-func (t *ReadMcpResourceTool) Call(_ context.Context, inp json.RawMessage, _ *tools.ToolUseContext) (*tools.ToolResult, error) {
+func (t *ReadMcpResourceTool) Call(ctx context.Context, inp json.RawMessage, toolCtx *tools.ToolUseContext) (*tools.ToolResult, error) {
 	var in input
 	if err := tools.ValidateInput(inp, &in); err != nil {
 		return tools.ErrorResult(err.Error()), nil
@@ -46,5 +48,36 @@ func (t *ReadMcpResourceTool) Call(_ context.Context, inp json.RawMessage, _ *to
 		return tools.ErrorResult("required field \"uri\" is missing or empty"), nil
 	}
 
-	return tools.TextResult("No MCP servers connected."), nil
+	mgr, ok := toolCtx.MCPManager.(*mcp.Manager)
+	if !ok || mgr == nil {
+		return tools.ErrorResult("No MCP manager available. MCP servers may not be configured."), nil
+	}
+
+	result, err := mgr.ReadResource(ctx, in.Server, in.URI)
+	if err != nil {
+		return tools.ErrorResult(fmt.Sprintf("Error reading resource from server %q: %s", in.Server, err)), nil
+	}
+
+	if result == nil || len(result.Contents) == 0 {
+		return tools.TextResult(fmt.Sprintf("Resource %q from server %q returned no content.", in.URI, in.Server)), nil
+	}
+
+	// Render content entries into readable text
+	var sb strings.Builder
+	for i, c := range result.Contents {
+		if i > 0 {
+			sb.WriteString("\n---\n\n")
+		}
+		sb.WriteString(fmt.Sprintf("URI: %s\n", c.URI))
+		if c.MIMEType != "" {
+			sb.WriteString(fmt.Sprintf("Type: %s\n", c.MIMEType))
+		}
+		if c.Text != "" {
+			sb.WriteString(fmt.Sprintf("\n%s\n", c.Text))
+		} else if len(c.Blob) > 0 {
+			sb.WriteString(fmt.Sprintf("\n[Binary content: %d bytes]\n", len(c.Blob)))
+		}
+	}
+
+	return tools.TextResult(sb.String()), nil
 }
