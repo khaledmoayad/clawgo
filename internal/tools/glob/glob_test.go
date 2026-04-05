@@ -3,6 +3,7 @@ package glob
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -167,6 +168,159 @@ func TestGlobTool_EmptyPattern(t *testing.T) {
 	result, err := tool.Call(context.Background(), input, &tools.ToolUseContext{WorkingDir: t.TempDir()})
 	require.NoError(t, err)
 	assert.True(t, result.IsError)
+}
+
+func TestGlobTool_MaxResultsCap(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create 150 files, exceeding the 100-file cap
+	for i := 0; i < 150; i++ {
+		name := fmt.Sprintf("test-%03d.txt", i)
+		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte("x"), 0644))
+	}
+
+	tool := New()
+	input := mustJSON(t, map[string]any{
+		"pattern": "*.txt",
+		"path":    dir,
+	})
+
+	result, err := tool.Call(context.Background(), input, &tools.ToolUseContext{WorkingDir: dir})
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+
+	output := result.Content[0].Text
+	// Count lines before truncation message (file entries only)
+	lines := strings.Split(output, "\n")
+	fileLines := 0
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "[Results truncated") {
+			continue
+		}
+		fileLines++
+	}
+	assert.Equal(t, 100, fileLines, "should return exactly 100 files")
+	assert.Contains(t, output, "[Results truncated")
+	assert.Contains(t, output, "showing 100 of 150 total matches")
+}
+
+func TestGlobTool_NoTruncation(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create 50 files, under the cap
+	for i := 0; i < 50; i++ {
+		name := fmt.Sprintf("file-%03d.txt", i)
+		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte("x"), 0644))
+	}
+
+	tool := New()
+	input := mustJSON(t, map[string]any{
+		"pattern": "*.txt",
+		"path":    dir,
+	})
+
+	result, err := tool.Call(context.Background(), input, &tools.ToolUseContext{WorkingDir: dir})
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+
+	output := result.Content[0].Text
+	assert.NotContains(t, output, "[Results truncated")
+
+	// Count file lines
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	assert.Equal(t, 50, len(lines), "should return all 50 files")
+}
+
+func TestGlobTool_ExactlyAtCap(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create exactly 100 files
+	for i := 0; i < 100; i++ {
+		name := fmt.Sprintf("cap-%03d.txt", i)
+		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte("x"), 0644))
+	}
+
+	tool := New()
+	input := mustJSON(t, map[string]any{
+		"pattern": "*.txt",
+		"path":    dir,
+	})
+
+	result, err := tool.Call(context.Background(), input, &tools.ToolUseContext{WorkingDir: dir})
+	require.NoError(t, err)
+	assert.False(t, result.IsError)
+
+	output := result.Content[0].Text
+	// No truncation at exactly the cap
+	assert.NotContains(t, output, "[Results truncated")
+
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	assert.Equal(t, 100, len(lines), "should return all 100 files without truncation")
+}
+
+func TestGlobTool_TruncationMetadata(t *testing.T) {
+	dir := t.TempDir()
+
+	// Test with truncation (120 files)
+	for i := 0; i < 120; i++ {
+		name := fmt.Sprintf("meta-%03d.txt", i)
+		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte("x"), 0644))
+	}
+
+	tool := New()
+	input := mustJSON(t, map[string]any{
+		"pattern": "*.txt",
+		"path":    dir,
+	})
+
+	result, err := tool.Call(context.Background(), input, &tools.ToolUseContext{WorkingDir: dir})
+	require.NoError(t, err)
+	require.NotNil(t, result.Metadata)
+	assert.Equal(t, true, result.Metadata["truncated"])
+	assert.Equal(t, 100, result.Metadata["num_files"])
+	assert.Equal(t, 120, result.Metadata["total_matches"])
+
+	// Test without truncation (30 files in a separate dir)
+	dir2 := t.TempDir()
+	for i := 0; i < 30; i++ {
+		name := fmt.Sprintf("small-%03d.txt", i)
+		require.NoError(t, os.WriteFile(filepath.Join(dir2, name), []byte("x"), 0644))
+	}
+
+	input2 := mustJSON(t, map[string]any{
+		"pattern": "*.txt",
+		"path":    dir2,
+	})
+
+	result2, err := tool.Call(context.Background(), input2, &tools.ToolUseContext{WorkingDir: dir2})
+	require.NoError(t, err)
+	require.NotNil(t, result2.Metadata)
+	assert.Equal(t, false, result2.Metadata["truncated"])
+	assert.Equal(t, 30, result2.Metadata["num_files"])
+	assert.Equal(t, 30, result2.Metadata["total_matches"])
+}
+
+func TestGlobTool_TruncationShowsTotal(t *testing.T) {
+	dir := t.TempDir()
+
+	// Create 200 files for a clear total
+	for i := 0; i < 200; i++ {
+		name := fmt.Sprintf("total-%03d.txt", i)
+		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte("x"), 0644))
+	}
+
+	tool := New()
+	input := mustJSON(t, map[string]any{
+		"pattern": "*.txt",
+		"path":    dir,
+	})
+
+	result, err := tool.Call(context.Background(), input, &tools.ToolUseContext{WorkingDir: dir})
+	require.NoError(t, err)
+
+	output := result.Content[0].Text
+	assert.Contains(t, output, "showing 100 of 200 total matches")
 }
 
 func mustJSON(t *testing.T, v any) json.RawMessage {

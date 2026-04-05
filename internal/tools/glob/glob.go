@@ -15,6 +15,10 @@ import (
 	"github.com/khaledmoayad/clawgo/internal/tools"
 )
 
+// maxGlobResults is the maximum number of files returned by the glob tool.
+// Matches Claude Code's 100-file cap to prevent flooding the context window.
+const maxGlobResults = 100
+
 // GlobTool finds files matching glob patterns including ** for recursive matching.
 type GlobTool struct{}
 
@@ -107,13 +111,33 @@ func (t *GlobTool) Call(ctx context.Context, input json.RawMessage, toolCtx *too
 		return entries[i].modTime > entries[j].modTime
 	})
 
+	// Apply max results cap to prevent flooding the context window
+	truncated := false
+	totalMatches := len(entries)
+	if len(entries) > maxGlobResults {
+		entries = entries[:maxGlobResults]
+		truncated = true
+	}
+
 	// Format output: one file per line
 	var b strings.Builder
 	for _, e := range entries {
 		fmt.Fprintln(&b, e.path)
 	}
 
-	return tools.TextResult(strings.TrimSpace(b.String())), nil
+	output := strings.TrimSpace(b.String())
+
+	if truncated {
+		output += fmt.Sprintf("\n\n[Results truncated: showing %d of %d total matches. Use a more specific pattern to see other files.]", maxGlobResults, totalMatches)
+	}
+
+	result := tools.TextResult(output)
+	result.Metadata = map[string]any{
+		"num_files":     len(entries),
+		"total_matches": totalMatches,
+		"truncated":     truncated,
+	}
+	return result, nil
 }
 
 // CheckPermissions determines whether the tool should be allowed, denied, or require user prompt.
