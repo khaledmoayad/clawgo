@@ -29,6 +29,23 @@ type Settings struct {
 	// Hooks holds user-defined hooks configuration in the same format as
 	// the hooks package HooksConfig type.
 	Hooks json.RawMessage `json:"hooks,omitempty"`
+
+	// MCPServers holds the raw MCP server configuration map (mcpServers key).
+	// Parsed by the mcp package's LoadMCPConfig function.
+	MCPServers json.RawMessage `json:"mcpServers,omitempty"`
+
+	// AllowedMCPServers is an enterprise/MDM allow list of MCP server names.
+	// When non-empty, only servers in this list may connect.
+	AllowedMCPServers []string `json:"allowedMcpServers,omitempty"`
+
+	// DeniedMCPServers is an enterprise/MDM deny list of MCP server names.
+	// Servers in this list are never allowed to connect, even if they appear
+	// in AllowedMCPServers.
+	DeniedMCPServers []string `json:"deniedMcpServers,omitempty"`
+
+	// ManagedMCP holds remote-managed MCP configuration pushed by enterprise
+	// policy. Stored as raw JSON to avoid coupling settings to MCP types.
+	ManagedMCP json.RawMessage `json:"managedMcp,omitempty"`
 }
 
 // LoadSettings loads and merges settings from multiple sources in precedence order:
@@ -161,5 +178,19 @@ func mergeSettings(target, src *Settings) {
 	// Override Hooks (raw JSON, higher priority wins entirely)
 	if len(src.Hooks) > 0 {
 		target.Hooks = src.Hooks
+	}
+
+	// Override MCPServers (raw JSON, higher priority wins entirely)
+	if len(src.MCPServers) > 0 {
+		target.MCPServers = src.MCPServers
+	}
+
+	// Append MCP allow/deny lists (enterprise policy accumulates)
+	target.AllowedMCPServers = append(target.AllowedMCPServers, src.AllowedMCPServers...)
+	target.DeniedMCPServers = append(target.DeniedMCPServers, src.DeniedMCPServers...)
+
+	// Override ManagedMCP (raw JSON, higher priority wins entirely)
+	if len(src.ManagedMCP) > 0 {
+		target.ManagedMCP = src.ManagedMCP
 	}
 }
