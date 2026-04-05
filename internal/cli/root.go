@@ -265,13 +265,17 @@ func NewRootCmd(version string) *cobra.Command {
 	// -------------------------------------------------------------------
 	f := cmd.Flags()
 
+	// CLI-11: Register --verbose/-v BEFORE Cobra's InitDefaultVersionFlag() runs.
+	// Cobra checks ShorthandLookup("v") when creating the version flag; if -v
+	// is already taken, --version gets registered WITHOUT the -v shorthand.
+	// This matches Claude Code behavior where -v means --verbose, not --version.
+	f.BoolVarP(&flags.Verbose, "verbose", "v", false, "Enable verbose output")
+
 	// Core flags
 	f.StringVarP(&flags.Model, "model", "m", "", "Model to use (overrides ANTHROPIC_MODEL)")
 	f.StringVar(&flags.PermissionMode, "permission-mode", "default", "Permission mode: default, plan, auto, bypass")
 	f.BoolVarP(&flags.Resume, "resume", "r", false, "Resume a conversation by session ID")
 	f.StringVar(&flags.SessionID, "session-id", "", "Specific session ID to resume")
-	// CLI-11: --verbose has NO -v shorthand (Cobra provides --version by default)
-	f.BoolVar(&flags.Verbose, "verbose", false, "Enable verbose output")
 	f.IntVar(&flags.MaxTurns, "max-turns", 0, "Maximum conversation turns (0 = unlimited)")
 	f.StringVar(&flags.SystemPrompt, "system-prompt", "", "System prompt override")
 	f.StringVar(&flags.OutputFormat, "output-format", "text", "Output format: text, json, stream-json")
