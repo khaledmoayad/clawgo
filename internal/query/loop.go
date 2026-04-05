@@ -226,12 +226,14 @@ func RunLoop(ctx context.Context, params *LoopParams) error {
 		assistantMsg := api.MessageFromResponse(lastMessage)
 		state.Messages = append(state.Messages, assistantMsg)
 
+		// Fire MessageCallback for structured output modes (json/stream-json)
+		stopReason := string(lastMessage.StopReason)
+		if params.MessageCallback != nil {
+			params.MessageCallback("assistant", assistantMsg.Content, stopReason)
+		}
+
 		// Consume memory prefetch results (non-blocking)
 		_ = ConsumeMemoryPrefetch(memPrefetch)
-
-		// === Post-stream state machine (7 continue sites) ===
-
-		stopReason := string(lastMessage.StopReason)
 
 		// --- Site: max_tokens handling (Plan 02) ---
 		if IsMaxTokensStop(stopReason) {
@@ -405,7 +407,13 @@ func RunLoop(ctx context.Context, params *LoopParams) error {
 
 			// Add tool results as user message and continue loop
 			if len(toolResults) > 0 {
-				state.Messages = append(state.Messages, api.ToolResultsMessage(toolResults))
+				toolResultMsg := api.ToolResultsMessage(toolResults)
+				state.Messages = append(state.Messages, toolResultMsg)
+
+				// Fire MessageCallback for tool results (stream-json output)
+				if params.MessageCallback != nil {
+					params.MessageCallback("user", toolResultMsg.Content, "")
+				}
 			}
 
 			state.SetTransition(SiteToolUse)

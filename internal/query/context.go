@@ -45,6 +45,13 @@ type LoopParams struct {
 	// Non-interactive text output callback
 	TextCallback func(string) // Called for each "text" stream event (used by non-interactive mode)
 
+	// MessageCallback is called for each complete message during the loop.
+	// Used by non-interactive json/stream-json output modes to capture
+	// assistant messages, tool use events, and tool results.
+	// Parameters: role ("assistant" or "user"), content blocks, stop reason.
+	// If nil, only TextCallback is used.
+	MessageCallback func(role string, content []api.ContentBlock, stopReason string)
+
 	// API request augmentation
 	StreamConfig api.StreamConfig // Betas, thinking, headers, effort, cache control
 

@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/khaledmoayad/clawgo/internal/api"
+	"github.com/khaledmoayad/clawgo/internal/cli/input"
 	"github.com/khaledmoayad/clawgo/internal/commands"
 	"github.com/khaledmoayad/clawgo/internal/commands/all"
 	"github.com/khaledmoayad/clawgo/internal/config"
@@ -407,7 +408,21 @@ func Run(ctx context.Context, params *RunParams, cfg *config.Config, settings *c
 
 	// 11. Dispatch to interactive or non-interactive mode
 	// --print or prompt arg triggers non-interactive mode
-	if params.Prompt != "" || params.Print {
+	isNonInteractive := params.Print || params.Prompt != ""
+	if isNonInteractive {
+		prompt := params.Prompt
+		if prompt == "" && params.Print {
+			// Read from stdin based on input format
+			promptText, err := input.ReadPrompt(os.Stdin, params.InputFormat)
+			if err != nil {
+				return fmt.Errorf("read prompt from stdin: %w", err)
+			}
+			prompt = strings.TrimSpace(promptText)
+		}
+		if prompt == "" {
+			return fmt.Errorf("no prompt provided. Use: clawgo -p 'your question' or pipe input")
+		}
+
 		return RunNonInteractive(ctx, &NonInteractiveParams{
 			Client:               client,
 			Registry:             registry,
@@ -420,10 +435,19 @@ func Run(ctx context.Context, params *RunParams, cfg *config.Config, settings *c
 			MaxTurns:             params.MaxTurns,
 			WorkingDir:           workDir,
 			SessionID:            sessionID,
-			Prompt:               params.Prompt,
+			Prompt:               prompt,
 			OutputFormat:         params.OutputFormat,
 			CmdRegistry:          cmdRegistry,
 			ToolRules:            toolRules,
+			// CLI-05 output control
+			IncludeHookEvents:      params.IncludeHookEvents,
+			IncludePartialMessages: params.IncludePartialMessages,
+			ReplayUserMessages:     params.ReplayUserMessages,
+			JSONSchema:             params.JSONSchema,
+			// Budget control
+			MaxBudgetUSD: params.MaxBudgetUSD,
+			// Model info
+			Model: client.Model,
 		})
 	}
 
