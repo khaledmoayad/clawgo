@@ -163,3 +163,11 @@ func (m *InputModel) SetVimNormal(normal bool) {
 		m.textarea.Focus()
 	}
 }
+
+// InsertText appends text to the current textarea value and moves the cursor
+// to the end. Used by suggestion acceptance and history search results.
+func (m *InputModel) InsertText(text string) {
+	current := m.textarea.Value()
+	m.textarea.SetValue(current + text)
+	m.textarea.CursorEnd()
+}
