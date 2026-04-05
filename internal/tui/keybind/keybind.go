@@ -14,21 +14,35 @@ type Action string
 
 // Action constants for all bindable actions.
 const (
-	ActionSubmit     Action = "submit"
-	ActionQuit       Action = "quit"
-	ActionNewLine    Action = "newline"
-	ActionEscape     Action = "escape"
-	ActionApprove    Action = "approve"
-	ActionDeny       Action = "deny"
-	ActionAlways     Action = "always"
-	ActionScrollUp   Action = "scroll_up"
-	ActionScrollDown Action = "scroll_down"
-	ActionPageUp     Action = "page_up"
-	ActionPageDown   Action = "page_down"
-	ActionHome       Action = "home"
-	ActionEnd        Action = "end"
-	ActionDeleteLine Action = "delete_line"
-	ActionNone       Action = ""
+	ActionSubmit        Action = "submit"
+	ActionQuit          Action = "quit"
+	ActionNewLine       Action = "newline"
+	ActionEscape        Action = "escape"
+	ActionApprove       Action = "approve"
+	ActionDeny          Action = "deny"
+	ActionAlways        Action = "always"
+	ActionScrollUp      Action = "scroll_up"
+	ActionScrollDown    Action = "scroll_down"
+	ActionPageUp        Action = "page_up"
+	ActionPageDown      Action = "page_down"
+	ActionHome          Action = "home"
+	ActionEnd           Action = "end"
+	ActionDeleteLine    Action = "delete_line"
+	ActionHalfPageDown  Action = "half_page_down"
+	ActionHalfPageUp    Action = "half_page_up"
+	ActionScrollToTop   Action = "scroll_to_top"
+	ActionScrollToBottom Action = "scroll_to_bottom"
+	ActionUndo          Action = "undo"
+	ActionRedo          Action = "redo"
+	ActionSearchStart   Action = "search_start"
+	ActionSearchNext    Action = "search_next"
+	ActionSearchPrev    Action = "search_prev"
+	ActionDeleteRange   Action = "delete_range"
+	ActionChangeRange   Action = "change_range"
+	ActionYankRange     Action = "yank_range"
+	ActionPaste         Action = "paste"
+	ActionPasteBefore   Action = "paste_before"
+	ActionNone          Action = ""
 )
 
 // KeyCombo represents a key combination (key code + modifiers).
@@ -104,13 +118,15 @@ func ParseKeyCombo(s string) (KeyCombo, error) {
 // DefaultBindings returns the default keybinding configuration matching KeyMap defaults.
 func DefaultBindings() KeyBindConfig {
 	bindings := map[Action]KeyCombo{
-		ActionSubmit:  {Code: tea.KeyEnter, Mod: 0},
-		ActionNewLine: {Code: tea.KeyEnter, Mod: tea.ModShift},
-		ActionQuit:    {Code: 'c', Mod: tea.ModCtrl},
-		ActionEscape:  {Code: tea.KeyEscape, Mod: 0},
-		ActionApprove: {Code: 'y', Mod: 0},
-		ActionDeny:    {Code: 'n', Mod: 0},
-		ActionAlways:  {Code: 'a', Mod: 0},
+		ActionSubmit:       {Code: tea.KeyEnter, Mod: 0},
+		ActionNewLine:      {Code: tea.KeyEnter, Mod: tea.ModShift},
+		ActionQuit:         {Code: 'c', Mod: tea.ModCtrl},
+		ActionEscape:       {Code: tea.KeyEscape, Mod: 0},
+		ActionApprove:      {Code: 'y', Mod: 0},
+		ActionDeny:         {Code: 'n', Mod: 0},
+		ActionAlways:       {Code: 'a', Mod: 0},
+		ActionHalfPageDown: {Code: 'd', Mod: tea.ModCtrl},
+		ActionHalfPageUp:   {Code: 'u', Mod: tea.ModCtrl},
 	}
 
 	return buildConfig(bindings)
@@ -190,7 +206,10 @@ func AllActions() []Action {
 		ActionSubmit, ActionQuit, ActionNewLine, ActionEscape,
 		ActionApprove, ActionDeny, ActionAlways,
 		ActionScrollUp, ActionScrollDown, ActionPageUp, ActionPageDown,
-		ActionHome, ActionEnd,
+		ActionHome, ActionEnd, ActionHalfPageDown, ActionHalfPageUp,
+		ActionScrollToTop, ActionScrollToBottom,
+		ActionUndo, ActionRedo,
+		ActionSearchStart, ActionSearchNext, ActionSearchPrev,
 	}
 }
 
