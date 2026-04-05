@@ -42,7 +42,7 @@ func New() *WebSearchTool {
 }
 
 func (t *WebSearchTool) Name() string                { return "WebSearch" }
-func (t *WebSearchTool) Description() string          { return toolDescription }
+func (t *WebSearchTool) Description() string          { return ToolDescription() }
 func (t *WebSearchTool) IsReadOnly() bool             { return true }
 func (t *WebSearchTool) InputSchema() json.RawMessage { return json.RawMessage(inputSchemaJSON) }
 

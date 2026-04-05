@@ -53,7 +53,7 @@ func New(registry *tools.Registry, client *api.Client) *AgentTool {
 }
 
 func (t *AgentTool) Name() string                { return "Agent" }
-func (t *AgentTool) Description() string          { return toolDescription }
+func (t *AgentTool) Description() string          { return ToolDescription() }
 func (t *AgentTool) IsReadOnly() bool             { return false }
 func (t *AgentTool) InputSchema() json.RawMessage { return json.RawMessage(inputSchemaJSON) }
 

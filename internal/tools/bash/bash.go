@@ -26,7 +26,7 @@ type BashTool struct{}
 func New() *BashTool { return &BashTool{} }
 
 func (t *BashTool) Name() string                { return "Bash" }
-func (t *BashTool) Description() string          { return toolDescription }
+func (t *BashTool) Description() string          { return ToolDescription() }
 func (t *BashTool) IsReadOnly() bool             { return false }
 func (t *BashTool) InputSchema() json.RawMessage { return json.RawMessage(inputSchemaJSON) }
 
