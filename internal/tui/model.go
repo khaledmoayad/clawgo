@@ -5,6 +5,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/khaledmoayad/clawgo/internal/commands"
 	"github.com/khaledmoayad/clawgo/internal/tui/diff"
 	"github.com/khaledmoayad/clawgo/internal/tui/keybind"
 )
@@ -27,8 +28,12 @@ type Config struct {
 	Version     string
 	Model       string // Current AI model name
 	WorkingDir  string
+	SessionID   string
 	KeyBindings map[string]string // Custom key binding overrides from settings
 	VimMode     bool              // Whether vim mode is enabled from settings
+
+	// CmdRegistry is the slash command registry. If nil, slash commands are disabled.
+	CmdRegistry *commands.CommandRegistry
 }
 
 // VimToggleMsg signals that vim mode should be toggled.
@@ -50,9 +55,14 @@ type Model struct {
 	width      int
 	height     int
 
+	// Command infrastructure
+	cmdRegistry *commands.CommandRegistry
+
 	// Callback functions for query loop integration (set by Plan 07).
-	OnSubmit     func(text string) tea.Cmd               // Called when user submits input
-	OnPermission func(resp PermissionResponseMsg) tea.Cmd // Called on permission response
+	OnSubmit      func(text string) tea.Cmd               // Called when user submits input
+	OnPermission  func(resp PermissionResponseMsg) tea.Cmd // Called on permission response
+	OnCompact     func() tea.Cmd                           // Called when /compact is executed
+	OnModelChange func(model string) tea.Cmd               // Called when /model changes the model
 }
 
 // New creates a new TUI model.
@@ -68,17 +78,29 @@ func New(cfg Config) Model {
 		vim.SetEnabled(true)
 	}
 
+	inputModel := NewInputModel()
+
+	// Wire command names for tab completion
+	if cfg.CmdRegistry != nil {
+		names := make([]string, 0)
+		for _, cmd := range cfg.CmdRegistry.All() {
+			names = append(names, cmd.Name())
+		}
+		inputModel.SetCommandNames(names)
+	}
+
 	return Model{
-		state:      StateInput,
-		input:      NewInputModel(),
-		output:     NewOutputModel(),
-		spinner:    NewSpinnerModel(),
-		permission: NewPermissionModel(),
-		viewport:   diff.NewViewportModel(80, 24),
-		keys:       DefaultKeyMap(),
-		keyConfig:  keyConfig,
-		vim:        vim,
-		config:     cfg,
+		state:       StateInput,
+		input:       inputModel,
+		output:      NewOutputModel(),
+		spinner:     NewSpinnerModel(),
+		permission:  NewPermissionModel(),
+		viewport:    diff.NewViewportModel(80, 24),
+		keys:        DefaultKeyMap(),
+		keyConfig:   keyConfig,
+		vim:         vim,
+		config:      cfg,
+		cmdRegistry: cfg.CmdRegistry,
 	}
 }
 

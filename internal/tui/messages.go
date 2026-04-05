@@ -57,3 +57,10 @@ type DiffDisplayMsg struct {
 	Content  string
 	FilePath string
 }
+
+// CommandResultMsg carries the result of a slash command execution back to the TUI.
+type CommandResultMsg struct {
+	Type    string // "text", "clear", "compact", "model_change", "exit", "skip", "rewind"
+	Value   string // Display text or new model name
+	Command string // The command name that produced this result (e.g. "help")
+}

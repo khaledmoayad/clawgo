@@ -9,10 +9,11 @@ import (
 
 // InputModel manages the multi-line prompt input area.
 type InputModel struct {
-	textarea  textarea.Model
-	keys      KeyMap
-	focused   bool
-	vimNormal bool // true when vim is in Normal mode (blocks typing)
+	textarea     textarea.Model
+	keys         KeyMap
+	focused      bool
+	vimNormal    bool     // true when vim is in Normal mode (blocks typing)
+	commandNames []string // available slash command names for tab completion
 }
 
 // NewInputModel creates an input sub-model with a multi-line textarea.
@@ -69,6 +70,11 @@ func (m *InputModel) Focus() tea.Cmd {
 func (m *InputModel) Blur() {
 	m.textarea.Blur()
 	m.focused = false
+}
+
+// SetCommandNames sets the list of available slash command names for tab completion.
+func (m *InputModel) SetCommandNames(names []string) {
+	m.commandNames = names
 }
 
 // SetVimNormal sets vim normal mode state. When true, the textarea is blurred
