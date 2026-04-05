@@ -260,7 +260,24 @@ func Run(ctx context.Context, params *RunParams, cfg *config.Config, settings *c
 		sessionID = session.NewSessionID()
 	}
 
-	// 10. Dispatch to interactive or non-interactive mode
+	// 10. Build StreamConfig for API request augmentation (API-01, API-02, API-04)
+	streamCfg := api.StreamConfig{
+		Provider:     api.GetProvider(),
+		CacheControl: true,
+	}
+	// Enable adaptive thinking by default (can be overridden by env var)
+	if os.Getenv("CLAUDE_CODE_DISABLE_THINKING") != "true" {
+		streamCfg.Thinking = &api.ThinkingConfig{
+			Adaptive: true,
+		}
+	}
+	// Set request headers for correlation and identification
+	streamCfg.Headers = &api.RequestHeaders{
+		UserAgent: "ClawGo/" + params.Version,
+		SessionID: sessionID,
+	}
+
+	// 11. Dispatch to interactive or non-interactive mode
 	if params.Prompt != "" {
 		return RunNonInteractive(ctx, &NonInteractiveParams{
 			Client:               client,
@@ -270,6 +287,7 @@ func Run(ctx context.Context, params *RunParams, cfg *config.Config, settings *c
 			Messages:             existingMessages,
 			SystemPromptSections: systemPromptSections,
 			SystemPrompt:         systemPromptJoined,
+			StreamConfig:         streamCfg,
 			MaxTurns:             params.MaxTurns,
 			WorkingDir:           workDir,
 			SessionID:            sessionID,
@@ -288,6 +306,7 @@ func Run(ctx context.Context, params *RunParams, cfg *config.Config, settings *c
 		Messages:             existingMessages,
 		SystemPromptSections: systemPromptSections,
 		SystemPrompt:         systemPromptJoined,
+		StreamConfig:         streamCfg,
 		MaxTurns:             params.MaxTurns,
 		WorkingDir:           workDir,
 		ProjectRoot:          workDir,

@@ -36,7 +36,7 @@ func RunLoop(ctx context.Context, params *LoopParams) error {
 		var lastMessage *anthropic.Message
 		var lastUsage *api.Usage
 
-		eventCh := params.Client.StreamMessage(ctx, reqParams)
+		eventCh := params.Client.StreamMessageWithConfig(ctx, reqParams, params.StreamConfig)
 		for event := range eventCh {
 			// Forward event to TUI
 			if params.Program != nil {

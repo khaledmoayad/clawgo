@@ -24,6 +24,7 @@ type QueryEngineConfig struct {
 	MaxTurns     int    // 0 = unlimited
 	WorkingDir   string
 	ProjectRoot  string
+	StreamConfig api.StreamConfig // Betas, thinking, headers, effort, cache control
 }
 
 // QueryEngine manages agentic conversations programmatically.
@@ -143,7 +144,7 @@ func (e *QueryEngine) runLoop(ctx context.Context, ch chan<- SDKEvent) {
 		// Stream API response
 		var lastMessage *anthropic.Message
 		var lastUsage *api.Usage
-		streamCh := e.config.Client.StreamMessage(ctx, reqParams)
+		streamCh := e.config.Client.StreamMessageWithConfig(ctx, reqParams, e.config.StreamConfig)
 
 		for event := range streamCh {
 			switch event.Type {

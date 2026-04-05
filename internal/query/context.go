@@ -43,6 +43,9 @@ type LoopParams struct {
 	// Non-interactive text output callback
 	TextCallback func(string) // Called for each "text" stream event (used by non-interactive mode)
 
+	// API request augmentation
+	StreamConfig api.StreamConfig // Betas, thinking, headers, effort, cache control
+
 	// Compaction settings
 	AutoCompactEnabled         bool   // Enable auto-compaction when context window fills up
 	CompactCustomInstructions  string // Custom instructions included in compaction prompts

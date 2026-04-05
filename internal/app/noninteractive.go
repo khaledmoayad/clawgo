@@ -20,8 +20,9 @@ type NonInteractiveParams struct {
 	PermCtx              *permissions.PermissionContext
 	CostTracker          *cost.Tracker
 	Messages             []api.Message
-	SystemPromptSections []string // Multi-section system prompt (sent as separate content blocks)
-	SystemPrompt         string   // Joined system prompt string (for compact)
+	SystemPromptSections []string        // Multi-section system prompt (sent as separate content blocks)
+	SystemPrompt         string          // Joined system prompt string (for compact)
+	StreamConfig         api.StreamConfig // API request augmentation (betas, thinking, headers)
 	MaxTurns             int
 	WorkingDir           string
 	SessionID            string
@@ -46,6 +47,7 @@ func RunNonInteractive(ctx context.Context, params *NonInteractiveParams) error 
 		Messages:             params.Messages,
 		SystemPromptSections: params.SystemPromptSections,
 		SystemPrompt:         params.SystemPrompt,
+		StreamConfig:         params.StreamConfig,
 		MaxTurns:             params.MaxTurns,
 		WorkingDir:           params.WorkingDir,
 		SessionID:            params.SessionID,
