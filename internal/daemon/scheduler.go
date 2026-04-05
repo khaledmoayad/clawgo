@@ -7,7 +7,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"os/exec"
 	"sync"
 	"time"
 )
@@ -16,10 +15,11 @@ const checkInterval = 1 * time.Second
 
 // Scheduler runs cron tasks on a 1-second check loop.
 // It uses a file-based lock to ensure only one scheduler instance runs at a time.
+// NOTE: This is a transitional stub -- will be fully rewritten in Task 2.
 type Scheduler struct {
 	configDir string
 	lock      *Lock
-	tasks     []Task
+	tasks     []CronTask
 	mu        sync.Mutex
 }
 
@@ -43,7 +43,7 @@ func (s *Scheduler) Start(ctx context.Context) error {
 	}
 
 	// Load initial tasks from disk
-	tasks, err := LoadTasks(s.configDir)
+	tasks, err := ReadCronTasks(s.configDir)
 	if err != nil {
 		s.lock.Release()
 		return fmt.Errorf("load tasks: %w", err)
@@ -63,7 +63,7 @@ func (s *Scheduler) Start(ctx context.Context) error {
 			s.Stop()
 			return ctx.Err()
 		case <-ticker.C:
-			s.checkAndExecute(ctx)
+			s.checkAndFire()
 		}
 	}
 }
@@ -75,52 +75,30 @@ func (s *Scheduler) Stop() {
 	}
 }
 
-// checkAndExecute iterates through tasks, executes due ones, and saves state.
-func (s *Scheduler) checkAndExecute(ctx context.Context) {
+// checkAndFire iterates through tasks, fires due ones.
+// NOTE: Transitional implementation -- will be fully rewritten in Task 2.
+func (s *Scheduler) checkAndFire() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	now := time.Now()
-	changed := false
-
+	now := nowMs()
 	for i := range s.tasks {
 		task := &s.tasks[i]
-		if !task.Enabled || !task.IsDue(now) {
+		nextMs := NextCronRunMs(task.Cron, task.CreatedAt)
+		if nextMs == nil || *nextMs > now {
 			continue
 		}
-
-		s.executeTask(ctx, task)
-		changed = true
+		log.Printf("daemon: task %s due, prompt: %s", task.ID, task.Prompt)
+		ts := now
+		task.LastFiredAt = &ts
 	}
-
-	if changed {
-		if err := SaveTasks(s.configDir, s.tasks); err != nil {
-			log.Printf("daemon: failed to save tasks: %v", err)
-		}
-	}
-}
-
-// executeTask runs a single task's command and updates its timing fields.
-func (s *Scheduler) executeTask(ctx context.Context, task *Task) {
-	log.Printf("daemon: executing task %s: %s", task.ID, task.Command)
-
-	cmd := exec.CommandContext(ctx, "sh", "-c", task.Command)
-	cmd.Dir = task.ProjectDir
-
-	if output, err := cmd.CombinedOutput(); err != nil {
-		log.Printf("daemon: task %s failed: %v\noutput: %s", task.ID, err, string(output))
-	}
-
-	now := time.Now()
-	task.LastRun = &now
-	task.NextRun = task.CalculateNextRun(now)
 }
 
 // Tasks returns a copy of the current task list.
-func (s *Scheduler) Tasks() []Task {
+func (s *Scheduler) Tasks() []CronTask {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	result := make([]Task, len(s.tasks))
+	result := make([]CronTask, len(s.tasks))
 	copy(result, s.tasks)
 	return result
 }
