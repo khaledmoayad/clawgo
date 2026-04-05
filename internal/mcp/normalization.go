@@ -32,3 +32,25 @@ func NormalizeNameForMCP(name string) string {
 	}
 	return normalized
 }
+
+// NormalizeServerName normalizes an MCP server name to lowercase with
+// non-alphanumeric spans replaced by underscore, trimming leading/trailing _.
+// This is the canonical form stored in discovery caches.
+func NormalizeServerName(name string) string {
+	normalized := strings.ToLower(invalidMCPChars.ReplaceAllString(name, "_"))
+	normalized = consecutiveUnderscores.ReplaceAllString(normalized, "_")
+	normalized = strings.Trim(normalized, "_")
+	return normalized
+}
+
+// NormalizeToolName returns the fully qualified Claude Code-compatible tool
+// surface name: "mcp__<normalized-server>__<normalized-tool>".
+func NormalizeToolName(serverName, toolName string) string {
+	return "mcp__" + NormalizeServerName(serverName) + "__" + NormalizeServerName(toolName)
+}
+
+// NormalizePromptName returns the fully qualified Claude Code-compatible prompt
+// surface name: "mcp__<normalized-server>__<normalized-prompt>".
+func NormalizePromptName(serverName, promptName string) string {
+	return "mcp__" + NormalizeServerName(serverName) + "__" + NormalizeServerName(promptName)
+}

@@ -3,6 +3,7 @@ package mcp
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -12,6 +13,10 @@ import (
 
 	gomcp "github.com/modelcontextprotocol/go-sdk/mcp"
 )
+
+// errNoSession is returned when an operation requires a live MCP session
+// but the ConnectedServer has none (e.g., disabled or not yet connected).
+var errNoSession = errors.New("no active MCP session")
 
 // Default timeout for MCP tool calls (effectively infinite - ~27.8 hours).
 // Matches Claude Code's DEFAULT_MCP_TOOL_TIMEOUT_MS.
@@ -36,6 +41,10 @@ type ConnectedServer struct {
 
 	// normalizedTools maps normalized tool names (mcp__server__tool) to original names
 	normalizedTools map[string]string
+
+	// discovery caches the normalized tools, resources, and prompts from
+	// the last RefreshDiscovery call.
+	discovery discoveryCache
 
 	// stderrBuf captures stderr output from stdio subprocess for debugging
 	stderrBuf *bytes.Buffer
