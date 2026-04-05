@@ -119,6 +119,11 @@ func NewRootCmd(version string) *cobra.Command {
 	cmd.AddCommand(mcpCmd)
 	cmd.AddCommand(newCompletionCmd())
 
+	// Auth, update, and server subcommands
+	cmd.AddCommand(newAuthCmd())
+	cmd.AddCommand(newUpdateCmd())
+	cmd.AddCommand(newServerCmd())
+
 	// Bridge / remote control subcommand
 	var bridgeEnvName string
 	bridgeCmd := &cobra.Command{
