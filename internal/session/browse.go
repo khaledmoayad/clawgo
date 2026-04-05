@@ -153,19 +153,30 @@ func readSessionMetadata(sessionPath string) ([]Entry, int, time.Time, error) {
 		}
 		lineCount++
 
-		var entry Entry
-		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+		entry, err := ParseEntry([]byte(line))
+		if err != nil {
 			continue
 		}
-		entries = append(entries, entry)
+		// Also populate legacy Message field if present
+		var legacy struct {
+			Message json.RawMessage `json:"message"`
+		}
+		if json.Unmarshal([]byte(line), &legacy) == nil && legacy.Message != nil {
+			entry.Message = legacy.Message
+		}
+		entries = append(entries, *entry)
 
-		// Try to extract timestamp from first entry (if it has one)
+		// Try to extract timestamp from first entry
 		if lineCount == 1 {
-			// Check if the raw message has a timestamp field
 			var ts struct {
 				Timestamp string `json:"timestamp"`
 			}
-			_ = json.Unmarshal(entry.Message, &ts)
+			// Try the raw line first (new format has timestamp at top level)
+			_ = json.Unmarshal([]byte(line), &ts)
+			if ts.Timestamp == "" && entry.Message != nil {
+				// Fallback: legacy format has timestamp inside the message
+				_ = json.Unmarshal(entry.Message, &ts)
+			}
 			if ts.Timestamp != "" {
 				if t, err := time.Parse(time.RFC3339, ts.Timestamp); err == nil {
 					firstEntryTime = t
@@ -185,19 +196,41 @@ func GetSessionPreview(entries []Entry) string {
 			continue
 		}
 
-		var msg api.Message
-		if err := json.Unmarshal(e.Message, &msg); err != nil {
-			continue
+		// Try legacy Message field first
+		if e.Message != nil {
+			var msg api.Message
+			if err := json.Unmarshal(e.Message, &msg); err == nil {
+				if text := extractPreviewText(msg); text != "" {
+					return text
+				}
+			}
 		}
 
-		for _, block := range msg.Content {
-			if block.Type == api.ContentText && block.Text != "" {
-				text := strings.TrimSpace(block.Text)
-				if len(text) > 100 {
-					return text[:100] + "..."
+		// Try Raw field (new format: TranscriptMessage with inline content)
+		if e.Raw != nil {
+			var tm TranscriptMessage
+			if err := json.Unmarshal(e.Raw, &tm); err == nil && tm.Content != nil {
+				var msg api.Message
+				if err := json.Unmarshal(tm.Content, &msg); err == nil {
+					if text := extractPreviewText(msg); text != "" {
+						return text
+					}
 				}
-				return text
 			}
+		}
+	}
+	return ""
+}
+
+// extractPreviewText extracts text from a message, truncating to 100 chars.
+func extractPreviewText(msg api.Message) string {
+	for _, block := range msg.Content {
+		if block.Type == api.ContentText && block.Text != "" {
+			text := strings.TrimSpace(block.Text)
+			if len(text) > 100 {
+				return text[:100] + "..."
+			}
+			return text
 		}
 	}
 	return ""
