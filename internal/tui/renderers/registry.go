@@ -87,6 +87,16 @@ func NewRegistry() *RendererRegistry {
 	r.Register("task_assignment", RenderTaskAssignment)
 	r.Register("advisor", RenderAdvisor)
 
+	// Domain renderers: image, agent, MCP (from image.go, agent.go, mcp.go)
+	r.Register("image", RenderImage)
+	r.Register("agent_output", RenderAgentOutput)
+	r.Register("swarm_worker", RenderSwarmWorker)
+	r.Register("agent_notification", RenderAgentNotification)
+	r.Register("teammate", RenderTeammate)
+	r.Register("mcp_status", RenderMCPStatus)
+	r.Register("mcp_tool_result", RenderMCPToolResult)
+	r.Register("mcp_server_list", RenderMCPServerList)
+
 	return r
 }
 
