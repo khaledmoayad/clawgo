@@ -57,11 +57,18 @@ func (t *BashTool) CheckPermissions(_ context.Context, input json.RawMessage, pe
 	}
 	result, _ := classify.ClassifyBashCommand(in.Command)
 	switch result {
-	case classify.ClassifyReadOnly, classify.ClassifySafe:
-		return permissions.CheckPermissionWithRules("Bash", true, permCtx, permCtx.ToolRules), nil
 	case classify.ClassifyDeny:
 		return permissions.Deny, nil
+	case classify.ClassifyReadOnly, classify.ClassifySafe:
+		// Even read-only commands go through security validation for misparsing attacks
+		if secResult := classify.ValidateBashSecurity(in.Command); secResult != nil && secResult.Behavior != "passthrough" {
+			return permissions.Ask, nil
+		}
+		return permissions.CheckPermissionWithRules("Bash", true, permCtx, permCtx.ToolRules), nil
 	default:
+		if secResult := classify.ValidateBashSecurity(in.Command); secResult != nil && secResult.Behavior == "deny" {
+			return permissions.Deny, nil
+		}
 		return permissions.CheckPermissionWithRules("Bash", false, permCtx, permCtx.ToolRules), nil
 	}
 }
