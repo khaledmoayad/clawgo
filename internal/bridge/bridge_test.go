@@ -2,6 +2,7 @@ package bridge
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -13,76 +14,207 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestAPIClient_RegisterEnvironment(t *testing.T) {
-	var receivedName string
+func TestAPIClient_RegisterBridgeEnvironment(t *testing.T) {
+	var receivedBody map[string]interface{}
 	var receivedAuth string
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodPost, r.Method)
-		assert.Equal(t, "/v1/bridge/environments", r.URL.Path)
+		assert.Equal(t, "/v1/environments/bridge", r.URL.Path)
 		receivedAuth = r.Header.Get("Authorization")
 
-		var body map[string]string
-		err := json.NewDecoder(r.Body).Decode(&body)
+		err := json.NewDecoder(r.Body).Decode(&receivedBody)
 		require.NoError(t, err)
-		receivedName = body["name"]
 
 		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(Environment{
-			ID:     "env-123",
-			Name:   body["name"],
-			Status: "online",
+		json.NewEncoder(w).Encode(map[string]string{
+			"environment_id":     "env-123",
+			"environment_secret": "secret-abc",
 		})
 	}))
 	defer srv.Close()
 
 	client := NewAPIClient(srv.URL, func() string { return "test-token" })
-	env, err := client.RegisterEnvironment(context.Background(), "my-machine")
+	cfg := BridgeConfig{
+		EnvironmentName:       "my-machine",
+		Dir:                   "/home/user/project",
+		Branch:                "main",
+		MaxConcurrentSessions: 5,
+		WorkerType:            "claude_code",
+	}
+	envID, envSecret, err := client.RegisterBridgeEnvironment(context.Background(), cfg)
 
 	require.NoError(t, err)
-	assert.Equal(t, "env-123", env.ID)
-	assert.Equal(t, "my-machine", env.Name)
-	assert.Equal(t, "online", env.Status)
-	assert.Equal(t, "my-machine", receivedName)
+	assert.Equal(t, "env-123", envID)
+	assert.Equal(t, "secret-abc", envSecret)
+	assert.Equal(t, "my-machine", receivedBody["machine_name"])
+	assert.Equal(t, "/home/user/project", receivedBody["directory"])
 	assert.Equal(t, "Bearer test-token", receivedAuth)
 }
 
-func TestAPIClient_PollWork(t *testing.T) {
+func TestAPIClient_PollForWork(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodGet, r.Method)
-		assert.Equal(t, "/v1/bridge/environments/env-123/work", r.URL.Path)
-		assert.Equal(t, "Bearer tok", r.Header.Get("Authorization"))
+		assert.Equal(t, "/v1/environments/env-123/work/poll", r.URL.Path)
+		assert.Equal(t, "Bearer env-secret", r.Header.Get("Authorization"))
 
-		items := []WorkItem{
-			{SessionID: "sess-1", Prompt: "hello", OrgUUID: "org-a"},
-			{SessionID: "sess-2", Prompt: "world", OrgUUID: "org-b"},
-		}
-		json.NewEncoder(w).Encode(items)
+		json.NewEncoder(w).Encode(WorkResponse{
+			ID:   "work-1",
+			Type: "work",
+			Data: WorkData{Type: "session", ID: "sess-1"},
+		})
 	}))
 	defer srv.Close()
 
 	client := NewAPIClient(srv.URL, func() string { return "tok" })
-	items, err := client.PollWork(context.Background(), "env-123")
+	work, err := client.PollForWork(context.Background(), "env-123", "env-secret", nil)
 
 	require.NoError(t, err)
-	require.Len(t, items, 2)
-	assert.Equal(t, "sess-1", items[0].SessionID)
-	assert.Equal(t, "hello", items[0].Prompt)
-	assert.Equal(t, "sess-2", items[1].SessionID)
-	assert.Equal(t, "world", items[1].Prompt)
+	require.NotNil(t, work)
+	assert.Equal(t, "work-1", work.ID)
+	assert.Equal(t, "session", work.Data.Type)
+	assert.Equal(t, "sess-1", work.Data.ID)
 }
 
-func TestAPIClient_PollWork_Empty(t *testing.T) {
+func TestAPIClient_PollForWork_Empty(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode([]WorkItem{})
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("null"))
 	}))
 	defer srv.Close()
 
 	client := NewAPIClient(srv.URL, func() string { return "tok" })
-	items, err := client.PollWork(context.Background(), "env-1")
+	work, err := client.PollForWork(context.Background(), "env-1", "secret", nil)
 
 	require.NoError(t, err)
-	assert.Empty(t, items)
+	assert.Nil(t, work)
+}
+
+func TestAPIClient_AcknowledgeWork(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodPost, r.Method)
+		assert.Equal(t, "/v1/environments/env-1/work/work-1/ack", r.URL.Path)
+		assert.Equal(t, "Bearer session-tok", r.Header.Get("Authorization"))
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(srv.URL, func() string { return "tok" })
+	err := client.AcknowledgeWork(context.Background(), "env-1", "work-1", "session-tok")
+	require.NoError(t, err)
+}
+
+func TestAPIClient_HeartbeatWork(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodPost, r.Method)
+		assert.Equal(t, "/v1/environments/env-1/work/work-1/heartbeat", r.URL.Path)
+		assert.Equal(t, "Bearer session-tok", r.Header.Get("Authorization"))
+		json.NewEncoder(w).Encode(HeartbeatResponse{
+			LeaseExtended: true,
+			State:         "running",
+		})
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(srv.URL, func() string { return "tok" })
+	lease, state, err := client.HeartbeatWork(context.Background(), "env-1", "work-1", "session-tok")
+	require.NoError(t, err)
+	assert.True(t, lease)
+	assert.Equal(t, "running", state)
+}
+
+func TestAPIClient_ArchiveSession(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodPost, r.Method)
+		assert.Equal(t, "/v1/sessions/sess-1/archive", r.URL.Path)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(srv.URL, func() string { return "tok" })
+	err := client.ArchiveSession(context.Background(), "sess-1")
+	require.NoError(t, err)
+}
+
+func TestAPIClient_ArchiveSession_AlreadyArchived(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusConflict)
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(srv.URL, func() string { return "tok" })
+	err := client.ArchiveSession(context.Background(), "sess-1")
+	require.NoError(t, err) // 409 is not an error
+}
+
+func TestAPIClient_DeregisterEnvironment(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodDelete, r.Method)
+		assert.Equal(t, "/v1/environments/bridge/env-1", r.URL.Path)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(srv.URL, func() string { return "tok" })
+	err := client.DeregisterEnvironment(context.Background(), "env-1")
+	require.NoError(t, err)
+}
+
+func TestDecodeWorkSecret(t *testing.T) {
+	secret := WorkSecret{
+		Version:             1,
+		SessionIngressToken: "jwt-token-abc",
+		APIBaseURL:          "https://api.anthropic.com",
+		Sources:             []WorkSecretSource{{Type: "git"}},
+		Auth:                []WorkSecretAuth{{Type: "bearer", Token: "auth-tok"}},
+	}
+	data, err := json.Marshal(secret)
+	require.NoError(t, err)
+
+	encoded := base64.RawURLEncoding.EncodeToString(data)
+	decoded, err := DecodeWorkSecret(encoded)
+
+	require.NoError(t, err)
+	assert.Equal(t, 1, decoded.Version)
+	assert.Equal(t, "jwt-token-abc", decoded.SessionIngressToken)
+	assert.Equal(t, "https://api.anthropic.com", decoded.APIBaseURL)
+}
+
+func TestDecodeWorkSecret_InvalidVersion(t *testing.T) {
+	secret := map[string]interface{}{
+		"version":               2,
+		"session_ingress_token": "tok",
+		"api_base_url":          "https://example.com",
+	}
+	data, _ := json.Marshal(secret)
+	encoded := base64.RawURLEncoding.EncodeToString(data)
+
+	_, err := DecodeWorkSecret(encoded)
+	assert.ErrorContains(t, err, "unsupported work secret version: 2")
+}
+
+func TestDecodeWorkSecret_MissingToken(t *testing.T) {
+	secret := map[string]interface{}{
+		"version":      1,
+		"api_base_url": "https://example.com",
+	}
+	data, _ := json.Marshal(secret)
+	encoded := base64.RawURLEncoding.EncodeToString(data)
+
+	_, err := DecodeWorkSecret(encoded)
+	assert.ErrorContains(t, err, "missing or empty session_ingress_token")
+}
+
+func TestDecodeWorkSecret_MissingBaseURL(t *testing.T) {
+	secret := map[string]interface{}{
+		"version":               1,
+		"session_ingress_token": "tok",
+	}
+	data, _ := json.Marshal(secret)
+	encoded := base64.RawURLEncoding.EncodeToString(data)
+
+	_, err := DecodeWorkSecret(encoded)
+	assert.ErrorContains(t, err, "missing api_base_url")
 }
 
 func TestSessionPool_CanSpawn(t *testing.T) {
@@ -90,17 +222,16 @@ func TestSessionPool_CanSpawn(t *testing.T) {
 	assert.True(t, pool.CanSpawn())
 
 	ctx := context.Background()
-	// Spawn 2 sessions that block until cancelled
 	ctx1, cancel1 := context.WithCancel(ctx)
 	defer cancel1()
-	_, err := pool.Spawn(ctx1, WorkItem{SessionID: "s1"}, func(ctx context.Context, w WorkItem) {
+	_, err := pool.Spawn(ctx1, &WorkResponse{ID: "w1", Data: WorkData{ID: "s1"}}, func(ctx context.Context, w *WorkResponse) {
 		<-ctx.Done()
 	})
 	require.NoError(t, err)
 
 	ctx2, cancel2 := context.WithCancel(ctx)
 	defer cancel2()
-	_, err = pool.Spawn(ctx2, WorkItem{SessionID: "s2"}, func(ctx context.Context, w WorkItem) {
+	_, err = pool.Spawn(ctx2, &WorkResponse{ID: "w2", Data: WorkData{ID: "s2"}}, func(ctx context.Context, w *WorkResponse) {
 		<-ctx.Done()
 	})
 	require.NoError(t, err)
@@ -108,7 +239,6 @@ func TestSessionPool_CanSpawn(t *testing.T) {
 	assert.False(t, pool.CanSpawn())
 	assert.Equal(t, 2, pool.ActiveCount())
 
-	// Cleanup
 	cancel1()
 	cancel2()
 	pool.StopAll()
@@ -121,16 +251,16 @@ func TestSessionPool_Spawn(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	handle, err := pool.Spawn(ctx, WorkItem{SessionID: "s1", Prompt: "test"}, func(ctx context.Context, w WorkItem) {
+	handle, err := pool.Spawn(ctx, &WorkResponse{ID: "w1", Data: WorkData{ID: "s1"}}, func(ctx context.Context, w *WorkResponse) {
 		handlerCalled.Store(true)
-		assert.Equal(t, "s1", w.SessionID)
-		assert.Equal(t, "test", w.Prompt)
+		assert.Equal(t, "w1", w.ID)
+		assert.Equal(t, "s1", w.Data.ID)
 		<-ctx.Done()
 	})
 	require.NoError(t, err)
-	assert.Equal(t, "s1", handle.ID)
+	assert.Equal(t, "w1", handle.WorkID)
+	assert.Equal(t, "s1", handle.SessionID)
 
-	// Give handler goroutine time to start
 	time.Sleep(50 * time.Millisecond)
 	assert.True(t, handlerCalled.Load())
 	assert.Equal(t, 1, pool.ActiveCount())
@@ -138,9 +268,29 @@ func TestSessionPool_Spawn(t *testing.T) {
 	cancel()
 	<-handle.Done
 
-	// Session should be removed from pool after completion
 	time.Sleep(50 * time.Millisecond)
 	assert.Equal(t, 0, pool.ActiveCount())
+}
+
+func TestSessionPool_GetByWorkID(t *testing.T) {
+	pool := NewSessionPool(5)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	_, err := pool.Spawn(ctx, &WorkResponse{ID: "w1", Data: WorkData{ID: "s1"}}, func(ctx context.Context, w *WorkResponse) {
+		<-ctx.Done()
+	})
+	require.NoError(t, err)
+
+	handle := pool.GetByWorkID("w1")
+	assert.NotNil(t, handle)
+	assert.Equal(t, "w1", handle.WorkID)
+
+	missing := pool.GetByWorkID("nonexistent")
+	assert.Nil(t, missing)
+
+	cancel()
+	pool.StopAll()
 }
 
 func TestSessionPool_StopAll(t *testing.T) {
@@ -149,13 +299,13 @@ func TestSessionPool_StopAll(t *testing.T) {
 
 	var cancelled1, cancelled2 atomic.Bool
 
-	_, err := pool.Spawn(ctx, WorkItem{SessionID: "s1"}, func(ctx context.Context, w WorkItem) {
+	_, err := pool.Spawn(ctx, &WorkResponse{ID: "w1", Data: WorkData{ID: "s1"}}, func(ctx context.Context, w *WorkResponse) {
 		<-ctx.Done()
 		cancelled1.Store(true)
 	})
 	require.NoError(t, err)
 
-	_, err = pool.Spawn(ctx, WorkItem{SessionID: "s2"}, func(ctx context.Context, w WorkItem) {
+	_, err = pool.Spawn(ctx, &WorkResponse{ID: "w2", Data: WorkData{ID: "s2"}}, func(ctx context.Context, w *WorkResponse) {
 		<-ctx.Done()
 		cancelled2.Store(true)
 	})
@@ -170,37 +320,75 @@ func TestSessionPool_StopAll(t *testing.T) {
 	assert.Equal(t, 0, pool.ActiveCount())
 }
 
+func TestSessionHandle_UpdateAccessToken(t *testing.T) {
+	handle := &SessionHandle{AccessToken: "initial"}
+	handle.UpdateAccessToken("refreshed")
+	assert.Equal(t, "refreshed", handle.AccessToken)
+}
+
+func TestSessionHandle_AddActivity(t *testing.T) {
+	handle := &SessionHandle{}
+
+	act := SessionActivity{Type: SessionActivityToolStart, Summary: "Reading file", Timestamp: 1234}
+	handle.AddActivity(act)
+
+	assert.Len(t, handle.Activities, 1)
+	assert.NotNil(t, handle.CurrentActivity)
+	assert.Equal(t, "Reading file", handle.CurrentActivity.Summary)
+}
+
+func TestWorkHandler_HandleWork_Healthcheck(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("no API calls should be made for healthcheck")
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(srv.URL, func() string { return "tok" })
+	handler := NewWorkHandler(client, "env-1", BridgeConfig{})
+	pool := NewSessionPool(5)
+
+	work := &WorkResponse{
+		ID:   "work-hc",
+		Data: WorkData{Type: "healthcheck", ID: "hc-1"},
+	}
+	err := handler.HandleWork(context.Background(), work, pool)
+	require.NoError(t, err)
+	assert.Equal(t, 0, pool.ActiveCount())
+}
+
 func TestBridge_PollLoop(t *testing.T) {
 	var pollCount atomic.Int32
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/bridge/environments":
-			json.NewEncoder(w).Encode(Environment{ID: "env-1", Name: "test", Status: "online"})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/environments/bridge":
+			json.NewEncoder(w).Encode(map[string]string{
+				"environment_id":     "env-1",
+				"environment_secret": "secret-1",
+			})
 		case r.Method == http.MethodGet:
 			pollCount.Add(1)
-			json.NewEncoder(w).Encode([]WorkItem{})
-		case r.Method == http.MethodPut:
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte("null"))
+		case r.Method == http.MethodDelete:
 			w.WriteHeader(http.StatusOK)
 		}
 	}))
 	defer srv.Close()
 
-	b := NewBridge(Config{
+	b := NewBridge(BridgeConfig{
 		APIBaseURL:            srv.URL,
 		GetToken:              func() string { return "tok" },
 		EnvironmentName:       "test-env",
 		MaxConcurrentSessions: 2,
-		PollInterval:          50 * time.Millisecond, // Short interval for testing
+		PollInterval:          50 * time.Millisecond,
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
 
-	// Start returns when context is cancelled
 	err := b.Start(ctx)
 	assert.ErrorIs(t, err, context.DeadlineExceeded)
 
-	// Should have polled multiple times in 300ms at 50ms intervals
 	assert.GreaterOrEqual(t, pollCount.Load(), int32(2))
 }

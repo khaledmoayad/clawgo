@@ -15,18 +15,24 @@ import (
 // Bridge orchestrates the bridge/remote control mode lifecycle:
 // environment registration, work polling, session spawning, and cleanup.
 type Bridge struct {
-	config Config
-	api    *APIClient
-	pool   *SessionPool
-	envID  string
+	config      BridgeConfig
+	api         *APIClient
+	pool        *SessionPool
+	workHandler *WorkHandler
+	envID       string
+	envSecret   string
 }
 
 // NewBridge creates a new Bridge with the given configuration.
-func NewBridge(cfg Config) *Bridge {
+func NewBridge(cfg BridgeConfig) *Bridge {
 	cfg = cfg.withDefaults()
+	api := NewAPIClient(cfg.APIBaseURL, cfg.GetToken)
+	if cfg.OnDebug != nil {
+		api.SetDebugFunc(cfg.OnDebug)
+	}
 	return &Bridge{
 		config: cfg,
-		api:    NewAPIClient(cfg.APIBaseURL, cfg.GetToken),
+		api:    api,
 		pool:   NewSessionPool(cfg.MaxConcurrentSessions),
 	}
 }
@@ -35,16 +41,20 @@ func NewBridge(cfg Config) *Bridge {
 // until the context is cancelled or an unrecoverable error occurs.
 func (b *Bridge) Start(ctx context.Context) error {
 	// Register this machine as a bridge environment
-	env, err := b.api.RegisterEnvironment(ctx, b.config.EnvironmentName)
+	envID, envSecret, err := b.api.RegisterBridgeEnvironment(ctx, b.config)
 	if err != nil {
 		return fmt.Errorf("bridge register: %w", err)
 	}
-	b.envID = env.ID
+	b.envID = envID
+	b.envSecret = envSecret
 
-	// Register cleanup so graceful shutdown stops sessions and reports offline
+	// Create the work handler now that we have an environment ID
+	b.workHandler = NewWorkHandler(b.api, b.envID, b.config)
+
+	// Register cleanup so graceful shutdown deregisters and stops sessions
 	app.RegisterCleanup(b.Stop)
 
-	log.Printf("bridge: registered environment %q (id=%s)", env.Name, env.ID)
+	log.Printf("bridge: registered environment %q (id=%s)", b.config.EnvironmentName, b.envID)
 
 	// Start polling for work
 	ticker := time.NewTicker(b.config.PollInterval)
@@ -63,45 +73,38 @@ func (b *Bridge) Start(ctx context.Context) error {
 	}
 }
 
-// Stop cancels all running sessions and reports offline status (best effort).
+// Stop cancels all running sessions and deregisters the environment (best effort).
 func (b *Bridge) Stop() {
 	b.pool.StopAll()
 	if b.envID != "" {
-		// Best-effort status report -- use background context since main may be cancelled
+		// Best-effort deregister -- use background context since main may be cancelled
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		_ = b.api.ReportStatus(ctx, b.envID, "offline")
+		if err := b.api.DeregisterEnvironment(ctx, b.envID); err != nil {
+			log.Printf("bridge: deregister error: %v", err)
+		}
 	}
 }
 
-// pollAndDispatch fetches work items and spawns sessions for each.
+// pollAndDispatch fetches a work item and dispatches it to the work handler.
 func (b *Bridge) pollAndDispatch(ctx context.Context) error {
-	items, err := b.api.PollWork(ctx, b.envID)
+	work, err := b.api.PollForWork(ctx, b.envID, b.envSecret, nil)
 	if err != nil {
 		return err
 	}
 
-	for _, work := range items {
-		if !b.pool.CanSpawn() {
-			log.Printf("bridge: pool at capacity, skipping work item %s", work.SessionID)
-			break
-		}
-		if _, err := b.pool.Spawn(ctx, work, b.handleWork); err != nil {
-			log.Printf("bridge: failed to spawn session for %s: %v", work.SessionID, err)
-		}
+	// No work available
+	if work == nil {
+		return nil
+	}
+
+	if !b.pool.CanSpawn() {
+		log.Printf("bridge: pool at capacity, skipping work %s", work.ID)
+		return nil
+	}
+
+	if err := b.workHandler.HandleWork(ctx, work, b.pool); err != nil {
+		log.Printf("bridge: failed to handle work %s: %v", work.ID, err)
 	}
 	return nil
-}
-
-// handleWork processes a single work item in a child session.
-// This is a placeholder -- full wiring with the query loop is integration work.
-func (b *Bridge) handleWork(ctx context.Context, work WorkItem) {
-	log.Printf("bridge: handling work item session=%s prompt=%q org=%s", work.SessionID, work.Prompt, work.OrgUUID)
-
-	// In a complete implementation, this would:
-	// 1. Create a new query session with the work prompt
-	// 2. Connect a WebSocket for event relay
-	// 3. Stream responses back to claude.ai
-	// For now, we just wait for context cancellation.
-	<-ctx.Done()
 }
