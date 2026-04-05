@@ -42,6 +42,7 @@ func TestBuildRequest_BasicMessage(t *testing.T) {
 	registry := tools.NewRegistry()
 	tracker := cost.NewTracker("claude-sonnet-4-20250514")
 
+	msgs := []api.Message{api.UserMessage("hello")}
 	params := &LoopParams{
 		Client: &api.Client{
 			Model:     "claude-sonnet-4-20250514",
@@ -50,11 +51,12 @@ func TestBuildRequest_BasicMessage(t *testing.T) {
 		Registry:     registry,
 		CostTracker:  tracker,
 		PermCtx:      permissions.NewPermissionContext(permissions.ModeDefault, nil, nil),
-		Messages:     []api.Message{api.UserMessage("hello")},
+		Messages:     msgs,
 		SystemPrompt: "You are helpful",
 	}
 
-	req := buildRequest(params)
+	state := NewLoopState(msgs)
+	req := buildRequest(params, state)
 	assert.Equal(t, "claude-sonnet-4-20250514", req.Model)
 	assert.Equal(t, int64(4096), req.MaxTokens)
 	assert.Len(t, req.Messages, 1)
@@ -66,6 +68,7 @@ func TestBuildRequest_WithTools(t *testing.T) {
 	registry := tools.NewRegistry(mt)
 	tracker := cost.NewTracker("claude-sonnet-4-20250514")
 
+	msgs := []api.Message{api.UserMessage("hello")}
 	params := &LoopParams{
 		Client: &api.Client{
 			Model:     "claude-sonnet-4-20250514",
@@ -74,10 +77,11 @@ func TestBuildRequest_WithTools(t *testing.T) {
 		Registry:    registry,
 		CostTracker: tracker,
 		PermCtx:     permissions.NewPermissionContext(permissions.ModeDefault, nil, nil),
-		Messages:    []api.Message{api.UserMessage("hello")},
+		Messages:    msgs,
 	}
 
-	req := buildRequest(params)
+	state := NewLoopState(msgs)
+	req := buildRequest(params, state)
 	assert.Len(t, req.Tools, 1)
 	assert.Equal(t, "test_tool", req.Tools[0].OfTool.Name)
 }
@@ -86,6 +90,7 @@ func TestBuildRequest_NoSystemPrompt(t *testing.T) {
 	registry := tools.NewRegistry()
 	tracker := cost.NewTracker("claude-sonnet-4-20250514")
 
+	msgs := []api.Message{api.UserMessage("hello")}
 	params := &LoopParams{
 		Client: &api.Client{
 			Model:     "claude-sonnet-4-20250514",
@@ -94,10 +99,11 @@ func TestBuildRequest_NoSystemPrompt(t *testing.T) {
 		Registry:    registry,
 		CostTracker: tracker,
 		PermCtx:     permissions.NewPermissionContext(permissions.ModeDefault, nil, nil),
-		Messages:    []api.Message{api.UserMessage("hello")},
+		Messages:    msgs,
 	}
 
-	req := buildRequest(params)
+	state := NewLoopState(msgs)
+	req := buildRequest(params, state)
 	assert.Nil(t, req.System)
 }
 

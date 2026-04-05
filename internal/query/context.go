@@ -50,6 +50,36 @@ type LoopParams struct {
 	AutoCompactEnabled         bool   // Enable auto-compaction when context window fills up
 	CompactCustomInstructions  string // Custom instructions included in compaction prompts
 	ConsecutiveCompactFailures int    // Circuit breaker state for auto-compaction
+
+	// Hook runner for stop hooks (injected for testability).
+	// Nil means no hooks are configured.
+	HookRunner HookRunner
+
+	// FallbackModel is the model to switch to when the primary model fails
+	// (e.g., FallbackTriggeredError). Empty means no fallback available.
+	FallbackModel string
+
+	// TokenBudget is the per-turn output token budget (0 = disabled).
+	// When set, the loop auto-continues until the budget is exhausted.
+	TokenBudget int
+
+	// AgentID identifies the current agent (empty for main session).
+	// Sub-agents skip certain features like token budgets and tool
+	// use summaries.
+	AgentID string
+
+	// UseStreamingToolExecution enables the StreamingToolExecutor
+	// (tools start as soon as their input arrives during streaming).
+	// When false, tools are executed after the full response completes.
+	UseStreamingToolExecution bool
+
+	// MaxOutputTokensOverride is the initial max output tokens override
+	// (e.g., set by a previous session or resume).
+	MaxOutputTokensOverride int
+
+	// SmallFastModel overrides the model used for tool use summary
+	// generation. Empty uses DefaultSmallFastModel.
+	SmallFastModel string
 }
 
 // toolUseContext creates a ToolUseContext for tool execution.
