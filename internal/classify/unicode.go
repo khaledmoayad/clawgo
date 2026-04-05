@@ -8,8 +8,10 @@ import (
 
 // unicodeWhitespaceRE matches Unicode whitespace characters that bash treats
 // as literal word content but other parsers may treat as word separators.
+// Extended beyond the TS original to also include zero-width space (U+200B)
+// through zero-width joiner (U+200D) as defense-in-depth.
 var unicodeWhitespaceRE = regexp.MustCompile(
-	"[\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF]",
+	"[\u00A0\u1680\u2000-\u200D\u2028\u2029\u202F\u205F\u3000\uFEFF]",
 )
 
 // ValidateUnicodeWhitespace detects non-ASCII whitespace characters that can
