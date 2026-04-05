@@ -18,15 +18,6 @@ import (
 // but the ConnectedServer has none (e.g., disabled or not yet connected).
 var errNoSession = errors.New("no active MCP session")
 
-// Default timeout for MCP tool calls (effectively infinite - ~27.8 hours).
-// Matches Claude Code's DEFAULT_MCP_TOOL_TIMEOUT_MS.
-const DefaultMCPToolTimeoutMS = 100_000_000
-
-// MaxMCPDescriptionLength caps MCP tool descriptions and server instructions
-// sent to the model. OpenAPI-generated MCP servers can dump 15-60KB of endpoint
-// docs; this caps the p95 tail without losing the intent.
-const MaxMCPDescriptionLength = 2048
-
 // DefaultMaxReconnectAttempts is the default number of reconnection attempts.
 const DefaultMaxReconnectAttempts = 5
 
@@ -190,12 +181,13 @@ func (cs *ConnectedServer) OriginalToolName(normalized string) string {
 	return cs.normalizedTools[normalized]
 }
 
-// CallTool calls a tool on the connected server.
+// CallTool calls a tool on the connected server with a default timeout.
+// For full policy behavior (progress, _meta, retries), use CallToolWithPolicy.
 func (cs *ConnectedServer) CallTool(ctx context.Context, name string, args map[string]any) (*gomcp.CallToolResult, error) {
 	// Apply timeout
 	timeoutMS := cs.Config.TimeoutMS
 	if timeoutMS <= 0 {
-		timeoutMS = DefaultMCPToolTimeoutMS
+		timeoutMS = DefaultMCPToolTimeoutMs
 	}
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(timeoutMS)*time.Millisecond)
 	defer cancel()
@@ -289,15 +281,20 @@ func (cs *ConnectedServer) Close() error {
 	return nil
 }
 
-// buildHTTPClient creates an http.Client with custom headers from the config.
-// Headers are injected via a RoundTripper wrapper.
+// buildHTTPClient creates an http.Client with custom headers from the config
+// and a per-request timeout matching MCPRequestTimeoutMs. This timeout applies
+// to individual POST/auth operations; long-lived SSE GET streams use their own
+// context cancellation and are unaffected.
 func buildHTTPClient(cfg MCPServerConfig) *http.Client {
+	timeout := time.Duration(MCPRequestTimeoutMs) * time.Millisecond
+	base := http.DefaultTransport
 	if len(cfg.Headers) == 0 {
-		return http.DefaultClient
+		return &http.Client{Timeout: timeout}
 	}
 	return &http.Client{
+		Timeout: timeout,
 		Transport: &headerTransport{
-			base:    http.DefaultTransport,
+			base:    base,
 			headers: cfg.Headers,
 		},
 	}

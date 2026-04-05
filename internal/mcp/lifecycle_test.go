@@ -234,7 +234,7 @@ func TestConnectUnknownTransport(t *testing.T) {
 
 func TestConstants(t *testing.T) {
 	// Verify constants match Claude Code values
-	assert.Equal(t, 100_000_000, DefaultMCPToolTimeoutMS)
+	assert.Equal(t, 100_000_000, DefaultMCPToolTimeoutMs)
 	assert.Equal(t, 2048, MaxMCPDescriptionLength)
 	assert.Equal(t, 5, DefaultMaxReconnectAttempts)
 }
