@@ -10,6 +10,7 @@ import (
 	"github.com/khaledmoayad/clawgo/internal/api"
 	"github.com/khaledmoayad/clawgo/internal/commands"
 	"github.com/khaledmoayad/clawgo/internal/cost"
+	"github.com/khaledmoayad/clawgo/internal/filestate"
 	"github.com/khaledmoayad/clawgo/internal/permissions"
 	"github.com/khaledmoayad/clawgo/internal/tools"
 )
@@ -80,15 +81,25 @@ type LoopParams struct {
 	// SmallFastModel overrides the model used for tool use summary
 	// generation. Empty uses DefaultSmallFastModel.
 	SmallFastModel string
+
+	// FileStateCache tracks file reads for read-before-edit enforcement.
+	// If nil, a default cache is created in toolUseContext().
+	FileStateCache *filestate.FileStateCache
 }
 
 // toolUseContext creates a ToolUseContext for tool execution.
 func (p *LoopParams) toolUseContext(ctx context.Context) *tools.ToolUseContext {
+	fsc := p.FileStateCache
+	if fsc == nil {
+		fsc = filestate.NewDefaultFileStateCache()
+		p.FileStateCache = fsc
+	}
 	return &tools.ToolUseContext{
-		WorkingDir:  p.WorkingDir,
-		ProjectRoot: p.ProjectRoot,
-		SessionID:   p.SessionID,
-		AbortCtx:    ctx,
-		PermCtx:     p.PermCtx,
+		WorkingDir:     p.WorkingDir,
+		ProjectRoot:    p.ProjectRoot,
+		SessionID:      p.SessionID,
+		AbortCtx:       ctx,
+		PermCtx:        p.PermCtx,
+		FileStateCache: fsc,
 	}
 }

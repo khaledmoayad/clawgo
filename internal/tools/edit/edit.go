@@ -58,6 +58,13 @@ func (t *EditTool) Call(ctx context.Context, input json.RawMessage, toolCtx *too
 		filePath = filepath.Join(toolCtx.WorkingDir, filePath)
 	}
 
+	// Enforce read-before-edit: file must have been read first (unless creating new)
+	if oldStr != "" && toolCtx != nil && toolCtx.FileStateCache != nil {
+		if !toolCtx.FileStateCache.Has(filePath) {
+			return tools.ErrorResult(fmt.Sprintf("You must read the file before editing it. Use the Read tool to read %s first.", filePath)), nil
+		}
+	}
+
 	// Special case: empty old_str means create/overwrite file with new_str
 	if oldStr == "" {
 		return t.createFile(filePath, newStr)

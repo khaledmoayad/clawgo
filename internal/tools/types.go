@@ -6,6 +6,7 @@ package tools
 import (
 	"context"
 
+	"github.com/khaledmoayad/clawgo/internal/filestate"
 	"github.com/khaledmoayad/clawgo/internal/permissions"
 	"github.com/khaledmoayad/clawgo/internal/tools/tasks"
 )
@@ -28,12 +29,13 @@ var (
 
 // ToolUseContext carries runtime state into tool execution.
 type ToolUseContext struct {
-	WorkingDir  string
-	ProjectRoot string
-	SessionID   string
-	AbortCtx    context.Context
-	PermCtx     *permissions.PermissionContext
-	TaskStore   *tasks.Store
+	WorkingDir     string
+	ProjectRoot    string
+	SessionID      string
+	AbortCtx       context.Context
+	PermCtx        *permissions.PermissionContext
+	TaskStore      *tasks.Store
+	FileStateCache *filestate.FileStateCache
 }
 
 // ContentBlock for tool results (text or image content).

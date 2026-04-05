@@ -10,7 +10,9 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
+	"github.com/khaledmoayad/clawgo/internal/filestate"
 	"github.com/khaledmoayad/clawgo/internal/permissions"
 	"github.com/khaledmoayad/clawgo/internal/tools"
 )
@@ -42,7 +44,7 @@ func (t *ReadTool) CheckPermissions(_ context.Context, _ json.RawMessage, permCt
 	return permissions.CheckPermission("Read", true, permCtx), nil
 }
 
-func (t *ReadTool) Call(_ context.Context, inp json.RawMessage, _ *tools.ToolUseContext) (*tools.ToolResult, error) {
+func (t *ReadTool) Call(_ context.Context, inp json.RawMessage, toolCtx *tools.ToolUseContext) (*tools.ToolResult, error) {
 	var in input
 	if err := tools.ValidateInput(inp, &in); err != nil {
 		return tools.ErrorResult(err.Error()), nil
@@ -105,6 +107,16 @@ func (t *ReadTool) Call(_ context.Context, inp json.RawMessage, _ *tools.ToolUse
 	for i := offset; i < end; i++ {
 		lineNum := i + 1 // 1-indexed line numbers
 		fmt.Fprintf(&output, "%6d\t%s\n", lineNum, lines[i])
+	}
+
+	// Record the read in the file state cache for read-before-edit enforcement
+	if toolCtx != nil && toolCtx.FileStateCache != nil {
+		toolCtx.FileStateCache.Set(in.FilePath, filestate.FileState{
+			Content:   content,
+			Timestamp: time.Now().UnixMilli(),
+			Offset:    offset,
+			Limit:     limit,
+		})
 	}
 
 	return tools.TextResult(output.String()), nil

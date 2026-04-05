@@ -47,13 +47,23 @@ func (t *WriteTool) CheckPermissions(_ context.Context, inp json.RawMessage, per
 	return permissions.CheckPermission("Write", false, permCtx), nil
 }
 
-func (t *WriteTool) Call(_ context.Context, inp json.RawMessage, _ *tools.ToolUseContext) (*tools.ToolResult, error) {
+func (t *WriteTool) Call(_ context.Context, inp json.RawMessage, toolCtx *tools.ToolUseContext) (*tools.ToolResult, error) {
 	var in input
 	if err := tools.ValidateInput(inp, &in); err != nil {
 		return tools.ErrorResult(err.Error()), nil
 	}
 	if strings.TrimSpace(in.FilePath) == "" {
 		return tools.ErrorResult("required field \"file_path\" is missing or empty"), nil
+	}
+
+	// Enforce read-before-write for existing files
+	if toolCtx != nil && toolCtx.FileStateCache != nil {
+		if _, err := os.Stat(in.FilePath); err == nil {
+			// File exists -- must have been read first
+			if !toolCtx.FileStateCache.Has(in.FilePath) {
+				return tools.ErrorResult(fmt.Sprintf("You must read the file before overwriting it. Use the Read tool to read %s first.", in.FilePath)), nil
+			}
+		}
 	}
 
 	// Create parent directories
