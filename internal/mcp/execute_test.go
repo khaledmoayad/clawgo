@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -245,5 +246,132 @@ func TestCallToolWithPolicyRetriesAfterElicitation(t *testing.T) {
 		extracted, ok := asMCPError(mcpErr)
 		require.True(t, ok)
 		assert.Equal(t, ElicitationRequiredCode, extracted.Code)
+	})
+}
+
+// TestNormalizeCallToolResultTruncatesLargeText verifies that text content
+// exceeding MaxMCPResultChars is truncated with a suffix.
+func TestNormalizeCallToolResultTruncatesLargeText(t *testing.T) {
+	// Build a text content block that exceeds the limit.
+	bigText := strings.Repeat("x", MaxMCPResultChars+1000)
+
+	result := &gomcp.CallToolResult{
+		Content: []gomcp.Content{
+			&gomcp.TextContent{Text: bigText},
+		},
+	}
+
+	normalized, err := NormalizeCallToolResult(result)
+	require.NoError(t, err)
+	require.Len(t, normalized.Content, 1)
+
+	tc, ok := normalized.Content[0].(*gomcp.TextContent)
+	require.True(t, ok)
+
+	// The text should be truncated to MaxMCPResultChars + the suffix.
+	assert.True(t, len(tc.Text) < len(bigText), "text should be shorter than original")
+	assert.True(t, len(tc.Text) > MaxMCPResultChars, "text should include truncation suffix")
+	assert.Contains(t, tc.Text, "[OUTPUT TRUNCATED")
+
+	// A text under the limit should pass through unchanged.
+	smallText := "hello world"
+	result2 := &gomcp.CallToolResult{
+		Content: []gomcp.Content{&gomcp.TextContent{Text: smallText}},
+	}
+	normalized2, err := NormalizeCallToolResult(result2)
+	require.NoError(t, err)
+	tc2, ok := normalized2.Content[0].(*gomcp.TextContent)
+	require.True(t, ok)
+	assert.Equal(t, smallText, tc2.Text)
+}
+
+// TestNormalizeCallToolResultPreservesMeta verifies that _meta on the result
+// survives normalization.
+func TestNormalizeCallToolResultPreservesMeta(t *testing.T) {
+	result := &gomcp.CallToolResult{
+		Meta: gomcp.Meta{"key": "value", "nested": map[string]any{"a": 1}},
+		Content: []gomcp.Content{
+			&gomcp.TextContent{Text: "ok"},
+		},
+	}
+
+	normalized, err := NormalizeCallToolResult(result)
+	require.NoError(t, err)
+	require.NotNil(t, normalized.Meta)
+	assert.Equal(t, "value", normalized.Meta["key"])
+
+	nested, ok := normalized.Meta["nested"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, 1, nested["a"])
+}
+
+// TestNormalizeCallToolResultConvertsUnsupportedContent verifies that
+// unsupported content types produce human-readable text summaries.
+func TestNormalizeCallToolResultConvertsUnsupportedContent(t *testing.T) {
+	t.Run("audio content becomes text summary", func(t *testing.T) {
+		result := &gomcp.CallToolResult{
+			Content: []gomcp.Content{
+				&gomcp.AudioContent{
+					Data:     []byte("fake-audio-data"),
+					MIMEType: "audio/mp3",
+				},
+			},
+		}
+
+		normalized, err := NormalizeCallToolResult(result)
+		require.NoError(t, err)
+		require.Len(t, normalized.Content, 1)
+
+		tc, ok := normalized.Content[0].(*gomcp.TextContent)
+		require.True(t, ok)
+		assert.Contains(t, tc.Text, "Audio content")
+		assert.Contains(t, tc.Text, "audio/mp3")
+	})
+
+	t.Run("nil result passes through", func(t *testing.T) {
+		result, err := NormalizeCallToolResult(nil)
+		require.NoError(t, err)
+		assert.Nil(t, result)
+	})
+
+	t.Run("isError flag preserved", func(t *testing.T) {
+		result := &gomcp.CallToolResult{
+			IsError: true,
+			Content: []gomcp.Content{&gomcp.TextContent{Text: "error details"}},
+		}
+		normalized, err := NormalizeCallToolResult(result)
+		require.NoError(t, err)
+		assert.True(t, normalized.IsError)
+	})
+
+	t.Run("structuredContent preserved", func(t *testing.T) {
+		sc := map[string]any{"key": "value"}
+		result := &gomcp.CallToolResult{
+			Content:           []gomcp.Content{&gomcp.TextContent{Text: "ok"}},
+			StructuredContent: sc,
+		}
+		normalized, err := NormalizeCallToolResult(result)
+		require.NoError(t, err)
+		assert.Equal(t, sc, normalized.StructuredContent)
+	})
+
+	t.Run("mixed content types", func(t *testing.T) {
+		result := &gomcp.CallToolResult{
+			Content: []gomcp.Content{
+				&gomcp.TextContent{Text: "text part"},
+				&gomcp.AudioContent{Data: []byte("audio"), MIMEType: "audio/wav"},
+			},
+		}
+		normalized, err := NormalizeCallToolResult(result)
+		require.NoError(t, err)
+		require.Len(t, normalized.Content, 2)
+
+		tc1, ok := normalized.Content[0].(*gomcp.TextContent)
+		require.True(t, ok)
+		assert.Equal(t, "text part", tc1.Text)
+
+		tc2, ok := normalized.Content[1].(*gomcp.TextContent)
+		require.True(t, ok)
+		assert.Contains(t, tc2.Text, "Audio content")
 	})
 }

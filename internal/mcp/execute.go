@@ -137,6 +137,20 @@ func (cs *ConnectedServer) CallToolWithPolicy(
 		result, err := cs.session.CallTool(ctx, params)
 
 		if err == nil {
+			// Normalize and size-bound the result before returning.
+			result, err = NormalizeCallToolResult(result)
+			if err != nil {
+				if opts.OnProgress != nil {
+					opts.OnProgress(ProgressEvent{
+						Status:     "failed",
+						ServerName: cs.Config.Name,
+						ToolName:   name,
+						ElapsedMs:  time.Since(startTime).Milliseconds(),
+					})
+				}
+				return nil, fmt.Errorf("normalizing result for tool %q: %w", name, err)
+			}
+
 			// Success -- emit completed progress.
 			if opts.OnProgress != nil {
 				opts.OnProgress(ProgressEvent{
