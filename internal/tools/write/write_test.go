@@ -172,11 +172,11 @@ func TestWriteTool_SuccessMessage(t *testing.T) {
 		t.Errorf("Call() returned IsError=true: %s", result.Content[0].Text)
 	}
 	text := result.Content[0].Text
-	if !strings.Contains(text, "Successfully wrote") {
-		t.Errorf("success message should contain 'Successfully wrote', got: %s", text)
+	if !strings.Contains(text, "Successfully created") && !strings.Contains(text, "Successfully updated") {
+		t.Errorf("success message should contain 'Successfully created' or 'Successfully updated', got: %s", text)
 	}
-	if !strings.Contains(text, fmt.Sprintf("%d", len(content))) {
-		t.Errorf("success message should contain byte count %d, got: %s", len(content), text)
+	if !strings.Contains(text, fmt.Sprintf("%d bytes", len(content))) {
+		t.Errorf("success message should contain byte count '%d bytes', got: %s", len(content), text)
 	}
 }
 
