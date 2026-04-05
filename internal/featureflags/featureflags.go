@@ -159,6 +159,119 @@ func GetValue(featureKey string, defaultValue any) any {
 	return val
 }
 
+// GetBool returns a boolean feature flag value, defaulting to false.
+func GetBool(key string) bool {
+	return GetBoolDefault(key, false)
+}
+
+// GetBoolDefault returns a boolean feature flag value with a custom default.
+func GetBoolDefault(key string, defaultVal bool) bool {
+	val := GetValue(key, defaultVal)
+	switch v := val.(type) {
+	case bool:
+		return v
+	case float64:
+		return v != 0
+	case int:
+		return v != 0
+	case string:
+		return v == "true" || v == "1"
+	default:
+		return defaultVal
+	}
+}
+
+// GetString returns a string feature flag value, defaulting to empty.
+func GetString(key string) string {
+	return GetStringDefault(key, "")
+}
+
+// GetStringDefault returns a string feature flag value with a custom default.
+func GetStringDefault(key string, defaultVal string) string {
+	val := GetValue(key, defaultVal)
+	switch v := val.(type) {
+	case string:
+		return v
+	case bool:
+		if v {
+			return "true"
+		}
+		return "false"
+	case float64:
+		return fmt.Sprintf("%g", v)
+	case int:
+		return fmt.Sprintf("%d", v)
+	default:
+		return defaultVal
+	}
+}
+
+// GetInt returns an integer feature flag value, defaulting to 0.
+func GetInt(key string) int {
+	return GetIntDefault(key, 0)
+}
+
+// GetIntDefault returns an integer feature flag value with a custom default.
+// Handles the JSON unmarshaling quirk where all numbers come as float64.
+func GetIntDefault(key string, defaultVal int) int {
+	val := GetValue(key, defaultVal)
+	switch v := val.(type) {
+	case float64:
+		return int(v)
+	case int:
+		return v
+	case string:
+		// Best-effort parse; on failure return default
+		var n int
+		if _, err := fmt.Sscanf(v, "%d", &n); err == nil {
+			return n
+		}
+		return defaultVal
+	default:
+		return defaultVal
+	}
+}
+
+// GetFloat returns a float64 feature flag value, defaulting to 0.
+func GetFloat(key string) float64 {
+	return GetFloatDefault(key, 0)
+}
+
+// GetFloatDefault returns a float64 feature flag value with a custom default.
+func GetFloatDefault(key string, defaultVal float64) float64 {
+	val := GetValue(key, defaultVal)
+	switch v := val.(type) {
+	case float64:
+		return v
+	case int:
+		return float64(v)
+	case string:
+		var f float64
+		if _, err := fmt.Sscanf(v, "%f", &f); err == nil {
+			return f
+		}
+		return defaultVal
+	default:
+		return defaultVal
+	}
+}
+
+// GetJSON returns a feature flag value as json.RawMessage for complex types
+// (maps, slices, etc.). Returns nil if the feature is not found or cannot
+// be serialized.
+func GetJSON(key string) json.RawMessage {
+	val := GetValue(key, nil)
+	if val == nil {
+		return nil
+	}
+
+	data, err := json.Marshal(val)
+	if err != nil {
+		return nil
+	}
+	return data
+}
+
 // UpdateAttributes updates the targeting attributes and triggers a
 // background refresh to re-evaluate targeting rules.
 func UpdateAttributes(attrs map[string]any) {
