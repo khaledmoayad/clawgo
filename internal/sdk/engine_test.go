@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/khaledmoayad/clawgo/internal/api"
+	"github.com/khaledmoayad/clawgo/internal/permissions"
 	"github.com/khaledmoayad/clawgo/internal/tools"
 )
 
@@ -253,6 +254,236 @@ func TestQueryEngineCancel(t *testing.T) {
 		// Success - channel closed
 	case <-time.After(5 * time.Second):
 		t.Fatal("channel did not close after context cancellation")
+	}
+}
+
+func sseResponseWithTokens(text string, inputTokens, outputTokens int) string {
+	// SSE stream matching the Anthropic Messages API streaming format with custom token counts
+	var b strings.Builder
+
+	// message_start
+	b.WriteString("event: message_start\n")
+	b.WriteString(fmt.Sprintf(`data: {"type":"message_start","message":{"id":"msg_test","type":"message","role":"assistant","content":[],"model":"claude-sonnet-4-20250514","stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":%d,"output_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}`, inputTokens) + "\n\n")
+
+	// content_block_start (text)
+	b.WriteString("event: content_block_start\n")
+	b.WriteString(`data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}` + "\n\n")
+
+	// content_block_delta (text)
+	escaped, _ := json.Marshal(text)
+	b.WriteString("event: content_block_delta\n")
+	b.WriteString(fmt.Sprintf(`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":%s}}`, escaped) + "\n\n")
+
+	// content_block_stop
+	b.WriteString("event: content_block_stop\n")
+	b.WriteString(`data: {"type":"content_block_stop","index":0}` + "\n\n")
+
+	// message_delta (stop_reason=end_turn)
+	b.WriteString("event: message_delta\n")
+	b.WriteString(fmt.Sprintf(`data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":%d}}`, outputTokens) + "\n\n")
+
+	// message_stop
+	b.WriteString("event: message_stop\n")
+	b.WriteString(`data: {"type":"message_stop"}` + "\n\n")
+
+	return b.String()
+}
+
+func TestQueryEngineBudgetEnforcement(t *testing.T) {
+	// Each call uses 100000 input tokens + 100000 output tokens.
+	// Sonnet 4 pricing: $3/MTok input + $15/MTok output
+	// Cost per call: 100000 * 3e-6 + 100000 * 15e-6 = 0.30 + 1.50 = $1.80
+	// Budget set to $1.00 so it should stop after first call.
+	callCount := 0
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, sseResponseWithTokens("response", 100000, 100000))
+	})
+	registry := tools.NewRegistry()
+
+	engine := NewQueryEngine(QueryEngineConfig{
+		Client:       client,
+		Registry:     registry,
+		SystemPrompt: "You are helpful.",
+		MaxBudgetUSD: 1.00,
+		WorkingDir:   "/tmp",
+		ProjectRoot:  "/tmp",
+	})
+
+	ctx := context.Background()
+	var events []SDKEvent
+	for evt := range engine.Ask(ctx, "Hello") {
+		events = append(events, evt)
+	}
+
+	// Should have received a result event indicating budget exceeded
+	hasBudgetError := false
+	for _, evt := range events {
+		if evt.Type == EventResult && evt.IsError {
+			hasBudgetError = true
+		}
+	}
+	if !hasBudgetError {
+		t.Error("expected a result event with IsError=true indicating budget exceeded")
+	}
+
+	// Should only have made one API call since budget exceeded after first
+	if callCount != 1 {
+		t.Errorf("expected 1 API call, got %d", callCount)
+	}
+}
+
+func TestQueryEngineConfigCustomSystemPrompt(t *testing.T) {
+	var capturedBody string
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		body, _ := json.Marshal(map[string]any{})
+		bodyBytes := make([]byte, r.ContentLength)
+		r.Body.Read(bodyBytes)
+		capturedBody = string(bodyBytes)
+		_ = body
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, sseResponse("ok"))
+	})
+	registry := tools.NewRegistry()
+
+	engine := NewQueryEngine(QueryEngineConfig{
+		Client:             client,
+		Registry:           registry,
+		SystemPrompt:       "Original prompt",
+		CustomSystemPrompt: "Custom override prompt",
+		WorkingDir:         "/tmp",
+		ProjectRoot:        "/tmp",
+	})
+
+	ctx := context.Background()
+	for range engine.Ask(ctx, "Hello") {
+		// drain
+	}
+
+	// The request body should contain the custom prompt, not the original
+	if !strings.Contains(capturedBody, "Custom override prompt") {
+		t.Error("expected CustomSystemPrompt to override SystemPrompt in API request")
+	}
+	if strings.Contains(capturedBody, "Original prompt") {
+		t.Error("expected original SystemPrompt to be overridden by CustomSystemPrompt")
+	}
+}
+
+func TestQueryEngineConfigAppendSystemPrompt(t *testing.T) {
+	var capturedBody string
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		bodyBytes := make([]byte, r.ContentLength)
+		r.Body.Read(bodyBytes)
+		capturedBody = string(bodyBytes)
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, sseResponse("ok"))
+	})
+	registry := tools.NewRegistry()
+
+	engine := NewQueryEngine(QueryEngineConfig{
+		Client:             client,
+		Registry:           registry,
+		SystemPrompt:       "Base prompt",
+		AppendSystemPrompt: "Appended instructions",
+		WorkingDir:         "/tmp",
+		ProjectRoot:        "/tmp",
+	})
+
+	ctx := context.Background()
+	for range engine.Ask(ctx, "Hello") {
+		// drain
+	}
+
+	if !strings.Contains(capturedBody, "Base prompt") {
+		t.Error("expected base SystemPrompt to be present")
+	}
+	if !strings.Contains(capturedBody, "Appended instructions") {
+		t.Error("expected AppendSystemPrompt to be appended to system prompt")
+	}
+}
+
+func TestQueryEngineConfigPermissionMode(t *testing.T) {
+	// This test verifies that the PermissionMode field exists and is wired
+	// into the engine config. We verify the config field is accepted.
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, sseResponse("ok"))
+	})
+	registry := tools.NewRegistry()
+
+	engine := NewQueryEngine(QueryEngineConfig{
+		Client:         client,
+		Registry:       registry,
+		SystemPrompt:   "You are helpful.",
+		PermissionMode: permissions.ModeDefault,
+		WorkingDir:     "/tmp",
+		ProjectRoot:    "/tmp",
+	})
+
+	if engine.config.PermissionMode != permissions.ModeDefault {
+		t.Errorf("PermissionMode = %v, want %v", engine.config.PermissionMode, permissions.ModeDefault)
+	}
+}
+
+func TestQueryEngineVerbose(t *testing.T) {
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, sseResponse("ok"))
+	})
+	registry := tools.NewRegistry()
+
+	engine := NewQueryEngine(QueryEngineConfig{
+		Client:       client,
+		Registry:     registry,
+		SystemPrompt: "You are helpful.",
+		Verbose:      true,
+		WorkingDir:   "/tmp",
+		ProjectRoot:  "/tmp",
+	})
+
+	if !engine.config.Verbose {
+		t.Error("expected Verbose to be true in config")
+	}
+}
+
+func TestQueryEngineInitialMessages(t *testing.T) {
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, sseResponse("ok"))
+	})
+	registry := tools.NewRegistry()
+
+	initialMsgs := []api.Message{
+		api.UserMessage("previous question"),
+		{Role: "assistant", Content: []api.ContentBlock{{Type: api.ContentText, Text: "previous answer"}}},
+	}
+
+	engine := NewQueryEngine(QueryEngineConfig{
+		Client:          client,
+		Registry:        registry,
+		SystemPrompt:    "You are helpful.",
+		InitialMessages: initialMsgs,
+		WorkingDir:      "/tmp",
+		ProjectRoot:     "/tmp",
+	})
+
+	// InitialMessages should be pre-populated in conversation history
+	msgs := engine.Messages()
+	if len(msgs) != 2 {
+		t.Fatalf("expected 2 initial messages, got %d", len(msgs))
+	}
+	if msgs[0].Role != "user" {
+		t.Errorf("first initial message role = %q, want %q", msgs[0].Role, "user")
+	}
+	if msgs[1].Role != "assistant" {
+		t.Errorf("second initial message role = %q, want %q", msgs[1].Role, "assistant")
 	}
 }
 
