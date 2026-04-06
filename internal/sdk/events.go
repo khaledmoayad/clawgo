@@ -40,6 +40,18 @@ const (
 
 	// EventError is emitted when an error occurs during the conversation.
 	EventError SDKEventType = "error"
+
+	// EventResult is emitted with the final result of a conversation.
+	EventResult SDKEventType = "result"
+
+	// EventCompacting is emitted when compaction starts/ends.
+	EventCompacting SDKEventType = "compacting"
+
+	// EventUserMessage is emitted when replaying a user message.
+	EventUserMessage SDKEventType = "user_message"
+
+	// EventSystemMessage is emitted for system-level messages.
+	EventSystemMessage SDKEventType = "system"
 )
 
 // SDKEvent represents a single event from the QueryEngine during a conversation turn.
@@ -51,10 +63,17 @@ type SDKEvent struct {
 	ToolID     string          // For tool_use_start/end/tool_result
 	ToolInput  json.RawMessage // For tool_use_end (complete input JSON)
 	ToolResult string          // For tool_result
-	IsError    bool            // For tool_result, error
-	Cost       float64         // For cost_update, turn_complete
+	IsError    bool            // For tool_result, error, result
+	Cost       float64         // For cost_update, turn_complete, result
 	Message    *api.Message    // For turn_complete (full accumulated message)
 	Error      error           // For error events
+
+	// SDK-02: Extended fields matching TS SDKMessage union
+	Result     string // For result events: accumulated assistant text
+	SessionID  string // For result events: session identifier
+	NumTurns   int    // For result events: number of turns in conversation
+	Status     string // For compacting events: "compacting" or ""
+	StopReason string // For turn_complete and result events
 }
 
 // TextDeltaEvent creates an SDKEvent for a text delta.
@@ -80,5 +99,34 @@ func TurnCompleteEvent(msg *api.Message, cost float64) SDKEvent {
 		Type:    EventTurnComplete,
 		Message: msg,
 		Cost:    cost,
+	}
+}
+
+// ResultEvent creates an SDKEvent for the final result of a conversation.
+func ResultEvent(result, sessionID string, cost float64, numTurns int, isError bool, stopReason string) SDKEvent {
+	return SDKEvent{
+		Type:       EventResult,
+		Result:     result,
+		SessionID:  sessionID,
+		Cost:       cost,
+		NumTurns:   numTurns,
+		IsError:    isError,
+		StopReason: stopReason,
+	}
+}
+
+// CompactingEvent creates an SDKEvent for compaction status changes.
+func CompactingEvent(status string) SDKEvent {
+	return SDKEvent{
+		Type:   EventCompacting,
+		Status: status,
+	}
+}
+
+// UserMessageEvent creates an SDKEvent for replayed user messages.
+func UserMessageEvent(text string) SDKEvent {
+	return SDKEvent{
+		Type: EventUserMessage,
+		Text: text,
 	}
 }

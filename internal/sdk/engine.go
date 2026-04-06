@@ -18,6 +18,7 @@ import (
 
 // QueryEngineConfig configures a QueryEngine instance.
 type QueryEngineConfig struct {
+	// Existing fields
 	Client       *api.Client
 	Registry     *tools.Registry
 	SystemPrompt string
@@ -25,6 +26,20 @@ type QueryEngineConfig struct {
 	WorkingDir   string
 	ProjectRoot  string
 	StreamConfig api.StreamConfig // Betas, thinking, headers, effort, cache control
+
+	// SDK-01: Extended config fields matching TS QueryEngine.ts
+	CustomSystemPrompt string              // Overrides SystemPrompt entirely
+	AppendSystemPrompt string              // Appended after SystemPrompt
+	PermissionMode     permissions.Mode    // Default: ModeAuto for SDK
+	MaxBudgetUSD       float64             // 0 = unlimited
+	InitialMessages    []api.Message       // Pre-populated conversation history
+	Verbose            bool                // Extra event detail
+	ReplayUserMessages bool                // Re-emit user messages as events
+	IncludePartialMsgs bool                // Include partial messages in events
+	UserSpecifiedModel string              // Override model at config level
+	FallbackModel      string              // Fallback if primary fails
+	AbortCtx           context.Context     // External abort context (default: background)
+	StatusCallback     func(status string) // SDK-05: compacting/nil status callback
 }
 
 // QueryEngine manages agentic conversations programmatically.
@@ -51,9 +66,16 @@ func NewQueryEngine(cfg QueryEngineConfig) *QueryEngine {
 		model = cfg.Client.Model
 	}
 
+	// Pre-populate conversation history from InitialMessages
+	messages := make([]api.Message, 0)
+	if len(cfg.InitialMessages) > 0 {
+		messages = make([]api.Message, len(cfg.InitialMessages))
+		copy(messages, cfg.InitialMessages)
+	}
+
 	return &QueryEngine{
 		config:      cfg,
-		messages:    make([]api.Message, 0),
+		messages:    messages,
 		costTracker: cost.NewTracker(model),
 		sessionID:   sessionID,
 	}
@@ -132,11 +154,17 @@ func (e *QueryEngine) runLoop(ctx context.Context, ch chan<- SDKEvent) {
 		turns++
 
 		// Apply micro-compaction before API call
+		if e.config.StatusCallback != nil {
+			e.config.StatusCallback("compacting")
+		}
 		e.mu.Lock()
 		e.messages = compact.MicroCompact(e.messages, e.config.Client.Model)
 		messages := make([]api.Message, len(e.messages))
 		copy(messages, e.messages)
 		e.mu.Unlock()
+		if e.config.StatusCallback != nil {
+			e.config.StatusCallback("")
+		}
 
 		// Build API request
 		reqParams := e.buildRequest(messages)
@@ -230,6 +258,24 @@ func (e *QueryEngine) runLoop(ctx context.Context, ch chan<- SDKEvent) {
 			})
 		}
 
+		// Check budget enforcement after cost update
+		if e.config.MaxBudgetUSD > 0 && e.costTracker.Cost() >= e.config.MaxBudgetUSD {
+			assistantMsg := api.MessageFromResponse(lastMessage)
+			e.mu.Lock()
+			e.messages = append(e.messages, assistantMsg)
+			e.mu.Unlock()
+			// Emit result event with budget exceeded indication
+			sendEvent(ctx, ch, ResultEvent(
+				"",
+				e.sessionID,
+				e.costTracker.Cost(),
+				turns,
+				true,
+				"budget_exceeded",
+			))
+			return
+		}
+
 		// Add assistant message to history
 		assistantMsg := api.MessageFromResponse(lastMessage)
 		e.mu.Lock()
@@ -238,6 +284,21 @@ func (e *QueryEngine) runLoop(ctx context.Context, ch chan<- SDKEvent) {
 
 		// Check stop reason -- if end_turn, we're done
 		if lastMessage.StopReason == "end_turn" {
+			// Emit result event with accumulated text
+			var resultText string
+			for _, block := range lastMessage.Content {
+				if block.Type == "text" {
+					resultText += block.Text
+				}
+			}
+			sendEvent(ctx, ch, ResultEvent(
+				resultText,
+				e.sessionID,
+				e.costTracker.Cost(),
+				turns,
+				false,
+				string(lastMessage.StopReason),
+			))
 			sendEvent(ctx, ch, TurnCompleteEvent(&assistantMsg, e.costTracker.Cost()))
 			return
 		}
@@ -272,9 +333,21 @@ func (e *QueryEngine) buildRequest(messages []api.Message) anthropic.MessageNewP
 		Messages:  msgParams,
 	}
 
-	if e.config.SystemPrompt != "" {
+	// Resolve system prompt: CustomSystemPrompt overrides, AppendSystemPrompt appends
+	sysPrompt := e.config.SystemPrompt
+	if e.config.CustomSystemPrompt != "" {
+		sysPrompt = e.config.CustomSystemPrompt
+	}
+	if e.config.AppendSystemPrompt != "" {
+		if sysPrompt != "" {
+			sysPrompt = sysPrompt + "\n\n" + e.config.AppendSystemPrompt
+		} else {
+			sysPrompt = e.config.AppendSystemPrompt
+		}
+	}
+	if sysPrompt != "" {
 		req.System = []anthropic.TextBlockParam{
-			{Text: e.config.SystemPrompt},
+			{Text: sysPrompt},
 		}
 	}
 
@@ -329,6 +402,12 @@ func (e *QueryEngine) executeToolUses(ctx context.Context, msg *anthropic.Messag
 	// Partition into batches
 	batches := tools.PartitionToolCalls(entries, e.config.Registry)
 
+	// Determine permission mode: use config value, default to ModeAuto for SDK
+	permMode := e.config.PermissionMode
+	if permMode == 0 {
+		permMode = permissions.ModeAuto
+	}
+
 	// Build tool use context
 	toolCtx := &tools.ToolUseContext{
 		WorkingDir:  e.config.WorkingDir,
@@ -336,7 +415,7 @@ func (e *QueryEngine) executeToolUses(ctx context.Context, msg *anthropic.Messag
 		SessionID:   e.sessionID,
 		AbortCtx:    ctx,
 		PermCtx: &permissions.PermissionContext{
-			Mode: permissions.ModeAuto,
+			Mode: permMode,
 		},
 	}
 
