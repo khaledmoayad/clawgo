@@ -48,22 +48,18 @@ func LaunchREPL(ctx context.Context, params *REPLParams) error {
 	sessionPath := session.GetSessionPath(params.ProjectRoot, params.SessionID)
 
 	model := tui.New(tui.Config{
-		Version:    params.Version,
-		Model:      params.Model,
-		WorkingDir: params.WorkingDir,
+		Version:     params.Version,
+		Model:       params.Model,
+		WorkingDir:  params.WorkingDir,
+		CmdRegistry: params.CmdRegistry,
 	})
 
 	p := tea.NewProgram(model)
 
-	// Wire OnSubmit: starts query loop in goroutine or dispatches slash commands
+	// Wire OnSubmit: starts query loop in goroutine (slash commands are intercepted by TUI)
 	model.OnSubmit = func(text string) tea.Cmd {
 		return func() tea.Msg {
 			history.Add(text)
-
-			// Check for slash commands before sending to query loop
-			if commands.IsCommand(text) && params.CmdRegistry != nil {
-				return handleSlashCommand(text, params, p)
-			}
 
 			// Persist user message to session file
 			_ = session.AppendEntry(sessionPath, session.EntryFromUserMessage(text))
@@ -131,6 +127,43 @@ func LaunchREPL(ctx context.Context, params *REPLParams) error {
 		}
 	}
 
+	// Wire OnCommand: executes slash commands with full REPL context
+	model.OnCommand = func(name, args string) tea.Cmd {
+		return func() tea.Msg {
+			cmd, ok := params.CmdRegistry.Find(name)
+			if !ok {
+				return tui.CommandResultMsg{Type: "text", Value: "Unknown command: /" + name, Command: name}
+			}
+
+			cmdCtx := &commands.CommandContext{
+				WorkingDir:   params.WorkingDir,
+				Messages:     params.Messages,
+				CostTracker:  params.CostTracker,
+				Model:        params.Model,
+				SessionID:    params.SessionID,
+				Version:      params.Version,
+				ToolRegistry: params.Registry,
+				CmdRegistry:  params.CmdRegistry,
+				SystemPrompt: params.SystemPrompt,
+				MCPManager:   params.MCPManager,
+			}
+
+			result, err := cmd.Execute(args, cmdCtx)
+			if err != nil {
+				return tui.CommandResultMsg{Type: "text", Value: "Command error: " + err.Error(), Command: name}
+			}
+			if result == nil {
+				return tui.CommandResultMsg{Type: "text", Value: "", Command: name}
+			}
+
+			return tui.CommandResultMsg{
+				Type:    result.Type,
+				Value:   result.Value,
+				Command: name,
+			}
+		}
+	}
+
 	// Register cleanup
 	RegisterCleanup(func() {
 		fmt.Println() // clean newline on exit
@@ -139,115 +172,6 @@ func LaunchREPL(ctx context.Context, params *REPLParams) error {
 	// Run the TUI
 	_, err := p.Run()
 	return err
-}
-
-// handleSlashCommand dispatches a slash command and returns an appropriate TUI message.
-func handleSlashCommand(input string, params *REPLParams, p *tea.Program) tea.Msg {
-	name, args := params.CmdRegistry.ParseCommandInput(input)
-
-	cmd, ok := params.CmdRegistry.Find(name)
-	if !ok {
-		// Unknown command -- display error to user
-		return tui.StreamEventMsg{
-			Event: api.StreamEvent{
-				Type: api.EventText,
-				Text: fmt.Sprintf("Unknown command: /%s. Type /help for available commands.", name),
-			},
-		}
-	}
-
-	// Build command context
-	cmdCtx := &commands.CommandContext{
-		WorkingDir:   params.WorkingDir,
-		Messages:     params.Messages,
-		CostTracker:  params.CostTracker,
-		Model:        params.Model,
-		SessionID:    params.SessionID,
-		Version:      params.Version,
-		ToolRegistry: params.Registry,
-		CmdRegistry:  params.CmdRegistry,
-		SystemPrompt: params.SystemPrompt,
-	}
-
-	// Execute the command
-	result, err := cmd.Execute(args, cmdCtx)
-	if err != nil {
-		return tui.StreamEventMsg{
-			Event: api.StreamEvent{
-				Type: api.EventText,
-				Text: fmt.Sprintf("Command error: %v", err),
-			},
-		}
-	}
-
-	if result == nil {
-		return tui.StreamEventMsg{
-			Event: api.StreamEvent{Type: api.EventMessageComplete},
-		}
-	}
-
-	// Handle result types
-	switch result.Type {
-	case "exit":
-		// Request REPL exit
-		p.Send(tea.Quit())
-		return nil
-
-	case "clear":
-		// Reset conversation messages
-		params.Messages = nil
-		return tui.StreamEventMsg{
-			Event: api.StreamEvent{
-				Type: api.EventText,
-				Text: "Conversation cleared.",
-			},
-		}
-
-	case "model_change":
-		// Update model on the client
-		if result.Value != "" {
-			params.Client.Model = result.Value
-			params.Model = result.Value
-		}
-		return tui.StreamEventMsg{
-			Event: api.StreamEvent{
-				Type: api.EventText,
-				Text: fmt.Sprintf("Model changed to: %s", result.Value),
-			},
-		}
-
-	case "compact":
-		// Compact is a Phase 3 feature -- stub for now
-		return tui.StreamEventMsg{
-			Event: api.StreamEvent{
-				Type: api.EventText,
-				Text: "Compact: conversation compaction will be available in a future update.",
-			},
-		}
-
-	case "text":
-		// Display text output then signal complete
-		return tui.StreamEventMsg{
-			Event: api.StreamEvent{
-				Type: api.EventText,
-				Text: result.Value,
-			},
-		}
-
-	default:
-		// For any other type, show the value
-		if result.Value != "" {
-			return tui.StreamEventMsg{
-				Event: api.StreamEvent{
-					Type: api.EventText,
-					Text: result.Value,
-				},
-			}
-		}
-		return tui.StreamEventMsg{
-			Event: api.StreamEvent{Type: api.EventMessageComplete},
-		}
-	}
 }
 
 // shellTimeout is the maximum duration for ! shell commands.

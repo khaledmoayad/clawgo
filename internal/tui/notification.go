@@ -220,7 +220,33 @@ func (m *NotificationModel) scheduleDismiss(key string, timeout time.Duration) t
 func (m NotificationModel) Update(msg tea.Msg) (NotificationModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case notificationDismissMsg:
-		return m, m.Dismiss(msg.key)
+		// Inline dismiss logic: Update uses a value receiver and returns the
+		// updated copy, so we cannot call the pointer-receiver Dismiss() and
+		// expect mutations to survive. We replicate the logic here instead.
+		if m.current != nil && m.current.Key == msg.key {
+			m.current = nil
+			var cmd tea.Cmd
+			if len(m.queue) > 0 {
+				next := m.queue[0]
+				m.queue = m.queue[1:]
+				m.current = &next
+				timeout := next.Timeout
+				if timeout == 0 {
+					timeout = DefaultNotificationTimeout
+				}
+				cmd = tea.Tick(timeout, func(time.Time) tea.Msg {
+					return notificationDismissMsg{key: next.Key}
+				})
+			}
+			return m, cmd
+		}
+		// Remove from queue if it's there
+		for i, q := range m.queue {
+			if q.Key == msg.key {
+				m.queue = append(m.queue[:i], m.queue[i+1:]...)
+				break
+			}
+		}
 	}
 	return m, nil
 }

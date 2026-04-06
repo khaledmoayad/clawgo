@@ -14,6 +14,9 @@ type DisplayMessage struct {
 	Content     string
 	ToolName    string // For tool_use/tool_result messages
 	DiffContent bool   // True if content is known to be a unified diff (fast path)
+	// Status qualifies tool_result messages: "success", "error", "rejected", "canceled".
+	// Empty means generic/unknown result (renders as "tool_result").
+	Status string
 }
 
 // OutputModel manages the message display area.
@@ -95,7 +98,7 @@ func (m OutputModel) View() string {
 func (m OutputModel) renderMessage(msg DisplayMessage) string {
 	if m.registry != nil {
 		return m.registry.Render(renderers.DisplayMessage{
-			Type:        mapRoleToType(msg.Role, msg.ToolName),
+			Type:        mapRoleToType(msg.Role, msg.ToolName, msg.Status),
 			Role:        msg.Role,
 			Content:     msg.Content,
 			ToolName:    msg.ToolName,

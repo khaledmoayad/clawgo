@@ -4,6 +4,7 @@ import (
 	"image/color"
 	"strings"
 
+	"charm.land/lipgloss/v2"
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/khaledmoayad/clawgo/internal/commands"
@@ -11,6 +12,7 @@ import (
 	"github.com/khaledmoayad/clawgo/internal/tui/help"
 	"github.com/khaledmoayad/clawgo/internal/tui/keybind"
 	"github.com/khaledmoayad/clawgo/internal/tui/overlay"
+	"github.com/khaledmoayad/clawgo/internal/tui/render"
 	"github.com/khaledmoayad/clawgo/internal/tui/renderers"
 	"github.com/khaledmoayad/clawgo/internal/tui/scroll"
 	"github.com/khaledmoayad/clawgo/internal/tui/suggest"
@@ -87,6 +89,7 @@ type Model struct {
 	OnCompact      func() tea.Cmd                           // Called when /compact is executed
 	OnModelChange  func(model string) tea.Cmd               // Called when /model changes the model
 	OnShellCommand func(cmd string) tea.Cmd                 // Called when user submits a !shell command
+	OnCommand      func(name, args string) tea.Cmd          // Called when a slash command is detected
 }
 
 // New creates a new TUI model.
@@ -137,7 +140,7 @@ func New(cfg Config) Model {
 	// Initialize virtual scroll with render function that dispatches through registry
 	renderFn := func(msg scroll.DisplayMessage, width int) string {
 		return reg.Render(renderers.DisplayMessage{
-			Type:        mapRoleToType(msg.Role, msg.ToolName),
+			Type:        mapRoleToType(msg.Role, msg.ToolName, ""),
 			Role:        msg.Role,
 			Content:     msg.Content,
 			ToolName:    msg.ToolName,
@@ -164,7 +167,7 @@ func New(cfg Config) Model {
 	return Model{
 		state:         StateInput,
 		input:         inputModel,
-		output:        NewOutputModel(),
+		output:        NewOutputModelWithRegistry(reg),
 		spinner:       NewSpinnerModel(),
 		permission:    NewPermissionModel(),
 		specPerm:      NewSpecializedPermissionModel(),
@@ -514,9 +517,33 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.spinner.Stop()
 		cmds = append(cmds, m.input.Focus())
 		return m, tea.Batch(cmds...)
+
+	case APIErrorMsg:
+		m.output.FinishStreaming()
+		m.syncMessagesToScroll()
+		errText := "API error"
+		if msg.ErrorInfo != nil {
+			errText = msg.ErrorInfo.UserMessage
+		}
+		m.output.AddMessage(DisplayMessage{Role: "error", Content: errText})
+		m.syncMessagesToScroll()
+		m.state = StateInput
+		m.spinner.Stop()
+		return m, m.input.Focus()
 	}
 
-	// Delegate to active sub-model
+	// Delegate to active sub-model; also forward scroll keys to virtual scroll
+	// when not in permission/viewport states so users can scroll history.
+	if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
+		k := keyMsg.Key()
+		if m.state == StateInput || m.state == StateStreaming {
+			switch k.Code {
+			case tea.KeyPgUp, tea.KeyPgDown, tea.KeyHome, tea.KeyEnd:
+				m.virtualScroll.Update(msg)
+			}
+		}
+	}
+
 	switch m.state {
 	case StateInput:
 		var cmd tea.Cmd
@@ -599,7 +626,7 @@ func (m Model) handleSlashCommand(text string) (tea.Model, tea.Cmd) {
 
 	name, args := m.cmdRegistry.ParseCommandInput(text)
 
-	cmd, found := m.cmdRegistry.Find(name)
+	_, found := m.cmdRegistry.Find(name)
 	if !found {
 		m.output.AddMessage(DisplayMessage{
 			Role:    "error",
@@ -609,7 +636,12 @@ func (m Model) handleSlashCommand(text string) (tea.Model, tea.Cmd) {
 		return m, m.input.Focus()
 	}
 
-	// Build the command context from current TUI state
+	// Delegate to OnCommand callback for full-context execution
+	if m.OnCommand != nil {
+		return m, m.OnCommand(name, args)
+	}
+
+	// Fallback: build limited local context when no callback is wired
 	cmdCtx := &commands.CommandContext{
 		WorkingDir:  m.config.WorkingDir,
 		Model:       m.config.Model,
@@ -618,6 +650,7 @@ func (m Model) handleSlashCommand(text string) (tea.Model, tea.Cmd) {
 		CmdRegistry: m.cmdRegistry,
 	}
 
+	cmd, _ := m.cmdRegistry.Find(name)
 	result, err := cmd.Execute(args, cmdCtx)
 	if err != nil {
 		m.output.AddMessage(DisplayMessage{
@@ -628,7 +661,6 @@ func (m Model) handleSlashCommand(text string) (tea.Model, tea.Cmd) {
 		return m, m.input.Focus()
 	}
 
-	// Return the command result as a message for the update loop to handle
 	return m, func() tea.Msg {
 		return CommandResultMsg{
 			Type:    result.Type,
@@ -765,12 +797,34 @@ func (m Model) viewString() string {
 	// 2. Message area via virtualScroll.View() (uses renderer registry)
 	sb.WriteString(m.virtualScroll.View())
 
-	// Also render streaming text if active (not yet in messages list)
+	// Also render streaming text if active (not yet in messages list).
+	// To avoid broken rendering from incomplete markdown (e.g. an unclosed
+	// code fence), only pass complete lines (up to the last newline) through
+	// the markdown renderer; any partial trailing line is appended as raw text.
 	if m.output.isStreaming && m.output.streamingText.Len() > 0 {
 		sb.WriteString("\n")
 		sb.WriteString(RoleLabel("assistant"))
 		sb.WriteString("\n")
-		sb.WriteString(MessagePadding.Render(m.output.streamingText.String()))
+		streamRaw := m.output.streamingText.String()
+		lastNL := strings.LastIndex(streamRaw, "\n")
+		var streamRendered string
+		if lastNL >= 0 {
+			complete := streamRaw[:lastNL+1]
+			partial := streamRaw[lastNL+1:]
+			rendered, err := render.RenderMarkdown(complete, m.width)
+			if err != nil {
+				streamRendered = MessagePadding.Render(streamRaw)
+			} else {
+				streamRendered = rendered
+				if partial != "" {
+					streamRendered += MessagePadding.Render(partial)
+				}
+			}
+		} else {
+			// No newline yet — show partial line as raw text.
+			streamRendered = MessagePadding.Render(streamRaw)
+		}
+		sb.WriteString(streamRendered)
 		sb.WriteString("\n")
 	}
 
@@ -818,19 +872,28 @@ func (m Model) viewString() string {
 		sb.WriteString(m.ruleList.View())
 	}
 
-	// 8. Overlay (if active, drawn on top of everything)
-	if m.overlayMgr.IsActive() {
-		sb.WriteString("\n")
-		sb.WriteString(m.overlayMgr.View(m.width, m.height))
+	base := sb.String()
+
+	// 8. Overlay (if active) — composited ON TOP of base content via lipgloss.Place.
+	// This prevents the overlay from appending below and scrolling the terminal.
+	if m.overlayMgr.IsActive() && m.width > 0 && m.height > 0 {
+		overlayContent := m.overlayMgr.View(m.width, m.height)
+		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, overlayContent,
+			lipgloss.WithWhitespaceChars(" "),
+			lipgloss.WithWhitespaceStyle(lipgloss.NewStyle().Foreground(lipgloss.Color("#3E4451"))),
+		)
 	}
 
-	// 9. Help dialog (if active, drawn on top of everything)
-	if m.helpDialog.IsActive() {
-		sb.WriteString("\n")
-		sb.WriteString(m.helpDialog.View(m.width, m.height))
+	// 9. Help dialog (if active) — composited on top of base content.
+	if m.helpDialog.IsActive() && m.width > 0 && m.height > 0 {
+		helpContent := m.helpDialog.View(m.width, m.height)
+		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, helpContent,
+			lipgloss.WithWhitespaceChars(" "),
+			lipgloss.WithWhitespaceStyle(lipgloss.NewStyle().Foreground(lipgloss.Color("#3E4451"))),
+		)
 	}
 
-	return sb.String()
+	return base
 }
 
 // syncMessagesToScroll converts output messages to scroll-package format
@@ -866,7 +929,7 @@ func (m Model) toOverlayMessages() []overlay.DisplayMessage {
 
 // mapRoleToType maps a DisplayMessage role to a renderer registry type key.
 // Falls back to the role itself if no specific mapping exists.
-func mapRoleToType(role, toolName string) string {
+func mapRoleToType(role, toolName, status string) string {
 	switch role {
 	case "user":
 		return "user_text"
@@ -877,7 +940,18 @@ func mapRoleToType(role, toolName string) string {
 	case "tool_use":
 		return "assistant_tool_use"
 	case "tool_result":
-		return "tool_result"
+		switch status {
+		case "error":
+			return "tool_error"
+		case "rejected":
+			return "tool_rejected"
+		case "canceled":
+			return "tool_canceled"
+		case "success":
+			return "tool_success"
+		default:
+			return "tool_result"
+		}
 	case "error":
 		return "system_api_error"
 	case "command":

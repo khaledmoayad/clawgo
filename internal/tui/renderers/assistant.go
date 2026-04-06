@@ -3,6 +3,8 @@ package renderers
 import (
 	"fmt"
 	"strings"
+
+	"github.com/khaledmoayad/clawgo/internal/tui/render"
 )
 
 // RenderAssistantText renders assistant text messages with the "Claude" role
@@ -12,9 +14,13 @@ func RenderAssistantText(msg DisplayMessage, width int) string {
 	sb.WriteString(assistantStyle.Render("Claude"))
 	sb.WriteString("\n")
 	if msg.Content != "" {
-		// Use padding for consistent indentation; content is expected to be
-		// pre-rendered markdown by the caller or rendered inline.
-		sb.WriteString(paddingStyle.Render(msg.Content))
+		rendered, err := render.RenderMarkdown(msg.Content, width)
+		if err != nil {
+			// Fall back to raw content with padding on render error.
+			sb.WriteString(paddingStyle.Render(msg.Content))
+		} else {
+			sb.WriteString(rendered)
+		}
 	}
 	return sb.String()
 }
