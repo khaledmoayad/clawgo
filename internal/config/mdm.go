@@ -5,16 +5,20 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 )
 
 // MDM/enterprise settings paths per platform.
 const (
-	linuxMDMPath  = "/etc/claude-code/managed-settings.json"
-	darwinMDMPath = "/Library/Managed Preferences/com.anthropic.claude-code.plist"
-	windowsRegKey = `HKLM\SOFTWARE\Policies\Anthropic\ClaudeCode`
+	linuxMDMPath       = "/etc/claude-code/managed-settings.json"
+	linuxMDMDropInDir  = "/etc/claude-code/managed-settings.d"
+	darwinMDMPath      = "/Library/Managed Preferences/com.anthropic.claude-code.plist"
+	windowsRegKey      = `HKLM\SOFTWARE\Policies\Anthropic\ClaudeCode`
+	windowsRegKeyHKCU  = `HKCU\SOFTWARE\Policies\Anthropic\ClaudeCode`
 )
 
 var (
@@ -52,21 +56,68 @@ func loadMDMSettingsPlatform(goos string) *Settings {
 	}
 }
 
-// loadMDMLinux reads /etc/claude-code/managed-settings.json.
+// loadMDMLinux reads /etc/claude-code/managed-settings.json and merges
+// drop-in files from /etc/claude-code/managed-settings.d/*.json.
 func loadMDMLinux() *Settings {
-	data, err := os.ReadFile(linuxMDMPath)
+	return loadMDMLinuxFromPaths(linuxMDMPath, linuxMDMDropInDir)
+}
+
+// loadMDMLinuxFromPaths is the testable implementation.
+// It reads the base settings file and then merges drop-in files
+// from the drop-in directory in alphabetical order.
+func loadMDMLinuxFromPaths(basePath, dropInDir string) *Settings {
+	result := &Settings{}
+
+	// Load base settings file
+	data, err := os.ReadFile(basePath)
 	if err != nil {
 		if !os.IsNotExist(err) {
-			fmt.Fprintf(os.Stderr, "clawgo: failed to read MDM settings from %s: %v\n", linuxMDMPath, err)
+			fmt.Fprintf(os.Stderr, "clawgo: failed to read MDM settings from %s: %v\n", basePath, err)
 		}
-		return &Settings{}
+		// Continue -- drop-in files may still exist
+	} else {
+		s, err := parseMDMJSON(data)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "clawgo: failed to parse MDM settings from %s: %v\n", basePath, err)
+		} else {
+			result = s
+		}
 	}
-	s, err := parseMDMJSON(data)
+
+	// Load drop-in directory files in alphabetical order
+	entries, err := os.ReadDir(dropInDir)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "clawgo: failed to parse MDM settings from %s: %v\n", linuxMDMPath, err)
-		return &Settings{}
+		// Drop-in dir missing is expected -- silently skip
+		return result
 	}
-	return s
+
+	var jsonFiles []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		if filepath.Ext(entry.Name()) == ".json" {
+			jsonFiles = append(jsonFiles, filepath.Join(dropInDir, entry.Name()))
+		}
+	}
+	sort.Strings(jsonFiles)
+
+	for _, path := range jsonFiles {
+		dropData, err := os.ReadFile(path)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "clawgo: failed to read MDM drop-in %s: %v\n", path, err)
+			continue
+		}
+		s, err := parseMDMJSON(dropData)
+		if err != nil {
+			// Invalid JSON in drop-in: log warning but do not fail
+			fmt.Fprintf(os.Stderr, "clawgo: failed to parse MDM drop-in %s: %v\n", path, err)
+			continue
+		}
+		mergeSettings(result, s)
+	}
+
+	return result
 }
 
 // loadMDMDarwin uses plutil to convert the managed preferences plist to JSON.
@@ -86,26 +137,47 @@ func loadMDMDarwin() *Settings {
 }
 
 // loadMDMWindows uses reg query to read settings from the Windows registry.
+// Tries HKLM first (higher priority); falls back to HKCU if HKLM is empty.
 func loadMDMWindows() *Settings {
-	cmd := exec.Command("reg", "query", windowsRegKey, "/v", "Settings", "/reg:64")
+	hklmJSON := queryWindowsReg(windowsRegKey)
+	hkcuJSON := queryWindowsReg(windowsRegKeyHKCU)
+	return loadMDMWindowsFromValues(hklmJSON, hkcuJSON)
+}
+
+// queryWindowsReg executes reg query and returns the JSON string value, or "".
+func queryWindowsReg(regKey string) string {
+	cmd := exec.Command("reg", "query", regKey, "/v", "Settings", "/reg:64")
 	out, err := cmd.Output()
 	if err != nil {
-		// reg query fails if key doesn't exist -- this is expected
-		return &Settings{}
+		return ""
+	}
+	return parseRegQueryOutput(string(out))
+}
+
+// loadMDMWindowsFromValues is the testable implementation.
+// HKLM takes priority; HKCU is used as fallback if HKLM is empty.
+func loadMDMWindowsFromValues(hklmJSON, hkcuJSON string) *Settings {
+	// Try HKLM first (higher priority)
+	if hklmJSON != "" {
+		s, err := parseMDMJSON([]byte(hklmJSON))
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "clawgo: failed to parse MDM HKLM registry settings: %v\n", err)
+		} else {
+			return s
+		}
 	}
 
-	// Parse reg query output: look for the REG_SZ value after "Settings"
-	jsonStr := parseRegQueryOutput(string(out))
-	if jsonStr == "" {
-		return &Settings{}
+	// Fall back to HKCU (lower priority)
+	if hkcuJSON != "" {
+		s, err := parseMDMJSON([]byte(hkcuJSON))
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "clawgo: failed to parse MDM HKCU registry settings: %v\n", err)
+		} else {
+			return s
+		}
 	}
 
-	s, err := parseMDMJSON([]byte(jsonStr))
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "clawgo: failed to parse MDM registry settings: %v\n", err)
-		return &Settings{}
-	}
-	return s
+	return &Settings{}
 }
 
 // parseRegQueryOutput extracts the REG_SZ value from reg query output.

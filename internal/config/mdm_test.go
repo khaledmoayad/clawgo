@@ -76,6 +76,136 @@ func TestLoadMDMSettingsPlatform(t *testing.T) {
 	})
 }
 
+func TestLoadMDMLinuxWithDropIn(t *testing.T) {
+	t.Run("merges base and drop-in files", func(t *testing.T) {
+		// Create temp dirs for both base and drop-in
+		tmpDir := t.TempDir()
+		basePath := filepath.Join(tmpDir, "managed-settings.json")
+		dropInDir := filepath.Join(tmpDir, "managed-settings.d")
+		require.NoError(t, os.MkdirAll(dropInDir, 0755))
+
+		// Base settings: model and permission
+		baseJSON := `{"model": "base-model", "permissionMode": "default"}`
+		require.NoError(t, os.WriteFile(basePath, []byte(baseJSON), 0644))
+
+		// Drop-in 01: overrides model
+		drop1 := `{"model": "dropin-model"}`
+		require.NoError(t, os.WriteFile(filepath.Join(dropInDir, "01-org.json"), []byte(drop1), 0644))
+
+		// Drop-in 02: adds custom instructions (later file alphabetically)
+		drop2 := `{"customInstructions": "team rules"}`
+		require.NoError(t, os.WriteFile(filepath.Join(dropInDir, "02-team.json"), []byte(drop2), 0644))
+
+		s := loadMDMLinuxFromPaths(basePath, dropInDir)
+		assert.Equal(t, "dropin-model", s.Model, "drop-in should override base model")
+		assert.Equal(t, "default", s.PermissionMode, "base permission preserved")
+		assert.Equal(t, "team rules", s.CustomInstructions, "drop-in 02 adds instructions")
+	})
+
+	t.Run("later drop-in alphabetically wins on conflict", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		basePath := filepath.Join(tmpDir, "managed-settings.json")
+		dropInDir := filepath.Join(tmpDir, "managed-settings.d")
+		require.NoError(t, os.MkdirAll(dropInDir, 0755))
+
+		require.NoError(t, os.WriteFile(basePath, []byte(`{}`), 0644))
+
+		// Two drop-ins that set model differently
+		require.NoError(t, os.WriteFile(
+			filepath.Join(dropInDir, "01-first.json"),
+			[]byte(`{"model": "first-model"}`), 0644))
+		require.NoError(t, os.WriteFile(
+			filepath.Join(dropInDir, "02-second.json"),
+			[]byte(`{"model": "second-model"}`), 0644))
+
+		s := loadMDMLinuxFromPaths(basePath, dropInDir)
+		assert.Equal(t, "second-model", s.Model, "later alphabetically should win")
+	})
+
+	t.Run("invalid JSON in drop-in is skipped", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		basePath := filepath.Join(tmpDir, "managed-settings.json")
+		dropInDir := filepath.Join(tmpDir, "managed-settings.d")
+		require.NoError(t, os.MkdirAll(dropInDir, 0755))
+
+		require.NoError(t, os.WriteFile(basePath, []byte(`{"model": "base"}`), 0644))
+
+		// Invalid JSON file
+		require.NoError(t, os.WriteFile(
+			filepath.Join(dropInDir, "01-bad.json"),
+			[]byte(`not valid json`), 0644))
+
+		// Valid file after bad one
+		require.NoError(t, os.WriteFile(
+			filepath.Join(dropInDir, "02-good.json"),
+			[]byte(`{"permissionMode": "plan"}`), 0644))
+
+		s := loadMDMLinuxFromPaths(basePath, dropInDir)
+		assert.Equal(t, "base", s.Model, "base model preserved")
+		assert.Equal(t, "plan", s.PermissionMode, "valid drop-in still applied")
+	})
+
+	t.Run("missing base file uses drop-ins only", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		basePath := filepath.Join(tmpDir, "nonexistent.json")
+		dropInDir := filepath.Join(tmpDir, "managed-settings.d")
+		require.NoError(t, os.MkdirAll(dropInDir, 0755))
+
+		require.NoError(t, os.WriteFile(
+			filepath.Join(dropInDir, "01-only.json"),
+			[]byte(`{"model": "dropin-only"}`), 0644))
+
+		s := loadMDMLinuxFromPaths(basePath, dropInDir)
+		assert.Equal(t, "dropin-only", s.Model)
+	})
+
+	t.Run("missing drop-in dir uses base only", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		basePath := filepath.Join(tmpDir, "managed-settings.json")
+		require.NoError(t, os.WriteFile(basePath, []byte(`{"model": "base-only"}`), 0644))
+
+		s := loadMDMLinuxFromPaths(basePath, filepath.Join(tmpDir, "nonexistent-dir"))
+		assert.Equal(t, "base-only", s.Model)
+	})
+}
+
+func TestLoadMDMWindowsHKCUFallback(t *testing.T) {
+	t.Run("HKLM result used when available", func(t *testing.T) {
+		hklmJSON := `{"model": "hklm-model"}`
+		hkcuJSON := `{"model": "hkcu-model"}`
+		s := loadMDMWindowsFromValues(hklmJSON, hkcuJSON)
+		assert.Equal(t, "hklm-model", s.Model, "HKLM should take priority over HKCU")
+	})
+
+	t.Run("HKCU used when HKLM is empty", func(t *testing.T) {
+		hkcuJSON := `{"model": "hkcu-model"}`
+		s := loadMDMWindowsFromValues("", hkcuJSON)
+		assert.Equal(t, "hkcu-model", s.Model, "HKCU should be used as fallback")
+	})
+
+	t.Run("empty when both are empty", func(t *testing.T) {
+		s := loadMDMWindowsFromValues("", "")
+		assert.Equal(t, "", s.Model)
+	})
+}
+
+func TestMergeSettingsHelper(t *testing.T) {
+	t.Run("non-empty fields in override replace base", func(t *testing.T) {
+		base := &Settings{Model: "base", PermissionMode: "default"}
+		override := &Settings{Model: "override"}
+		mergeSettings(base, override)
+		assert.Equal(t, "override", base.Model)
+		assert.Equal(t, "default", base.PermissionMode)
+	})
+
+	t.Run("empty fields in override do not replace base", func(t *testing.T) {
+		base := &Settings{Model: "base"}
+		override := &Settings{}
+		mergeSettings(base, override)
+		assert.Equal(t, "base", base.Model)
+	})
+}
+
 func TestGetConfigVersion(t *testing.T) {
 	t.Run("version present as float64", func(t *testing.T) {
 		data := map[string]interface{}{"configVersion": float64(3)}
