@@ -414,8 +414,12 @@ func TestCronScheduler_IsLoadingGate(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Now().UnixMilli()
 
+	// Use a recurring task so it goes through the check() loop, not the missed-task path.
+	// One-shot tasks created in the past are detected as "missed" on initial load and
+	// fired immediately via OnMissed/OnFire, bypassing the loading gate (by design).
+	recurring := true
 	tasks := []CronTask{
-		{ID: "gate0001", Cron: "* * * * *", Prompt: "gated", CreatedAt: now - 120000},
+		{ID: "gate0001", Cron: "* * * * *", Prompt: "gated", CreatedAt: now - 120000, Recurring: &recurring},
 	}
 	require.NoError(t, WriteCronTasks(tasks, dir))
 
