@@ -40,6 +40,21 @@ func FormatGitNote(tracker *Tracker) string {
 	return b.String()
 }
 
+// FormatCommitMessage appends the Co-Authored-By trailer to a commit message
+// when the tracker has AI-modified files. If no AI files exist, returns the
+// original message unchanged. Prevents duplicate trailers.
+func FormatCommitMessage(originalMsg string, tracker *Tracker) string {
+	files := tracker.GetAIModifiedFiles()
+	if len(files) == 0 {
+		return originalMsg
+	}
+	// Don't append if the trailer is already present
+	if strings.Contains(originalMsg, coAuthorTrailer) {
+		return originalMsg
+	}
+	return originalMsg + "\n\n" + coAuthorTrailer
+}
+
 // WriteGitNote adds a git note to the specified commit.
 // It executes `git notes add -m <note> <commitHash>` via the system git.
 func WriteGitNote(ctx context.Context, commitHash string, note string) error {

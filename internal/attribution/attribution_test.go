@@ -116,6 +116,42 @@ func TestFormatGitNote_NoAIChanges(t *testing.T) {
 	assert.Empty(t, note)
 }
 
+func TestFormatCommitMessage_WithAIFiles(t *testing.T) {
+	tracker := NewTracker("test-session")
+	tracker.RecordChange("main.go", []byte("package main"), true)
+
+	msg := FormatCommitMessage("feat: add feature", tracker)
+	assert.Contains(t, msg, "feat: add feature")
+	assert.Contains(t, msg, "Co-Authored-By: Claude <noreply@anthropic.com>")
+	// Should have two newlines between message and trailer
+	assert.Contains(t, msg, "\n\nCo-Authored-By")
+}
+
+func TestFormatCommitMessage_NoAIFiles(t *testing.T) {
+	tracker := NewTracker("test-session")
+	tracker.RecordChange("main.go", []byte("package main"), false)
+
+	msg := FormatCommitMessage("feat: add feature", tracker)
+	assert.Equal(t, "feat: add feature", msg)
+	assert.NotContains(t, msg, "Co-Authored-By")
+}
+
+func TestFormatCommitMessage_NoDuplicate(t *testing.T) {
+	tracker := NewTracker("test-session")
+	tracker.RecordChange("main.go", []byte("package main"), true)
+
+	original := "feat: add feature\n\nCo-Authored-By: Claude <noreply@anthropic.com>"
+	msg := FormatCommitMessage(original, tracker)
+	assert.Equal(t, original, msg, "should not duplicate trailer")
+}
+
+func TestFormatCommitMessage_EmptyTracker(t *testing.T) {
+	tracker := NewTracker("test-session")
+
+	msg := FormatCommitMessage("feat: add feature", tracker)
+	assert.Equal(t, "feat: add feature", msg)
+}
+
 func TestTracker_GetAttribution_ReturnsCopy(t *testing.T) {
 	tracker := NewTracker("test-session")
 	tracker.RecordChange("file.go", []byte("data"), true)
