@@ -64,13 +64,20 @@ func TestSpawnWorkerRegistersInStore(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	w, err := m.SpawnWorker(ctx, "beta", "test worker", "do something")
+	w, err := m.SpawnWorker(ctx, "beta", "researcher", "test worker", "do something")
 	if err != nil {
 		t.Fatalf("SpawnWorker error: %v", err)
 	}
 
-	if !strings.HasPrefix(w.ID, "agent-") {
-		t.Errorf("expected worker ID to start with 'agent-', got %q", w.ID)
+	expectedID := "researcher@beta"
+	if w.ID != expectedID {
+		t.Errorf("expected worker ID %q, got %q", expectedID, w.ID)
+	}
+	if w.AgentName != "researcher" {
+		t.Errorf("expected AgentName 'researcher', got %q", w.AgentName)
+	}
+	if w.TeamName != "beta" {
+		t.Errorf("expected TeamName 'beta', got %q", w.TeamName)
 	}
 	if w.Status != WorkerRunning {
 		t.Errorf("expected worker status 'running', got %q", w.Status)
@@ -116,7 +123,7 @@ func TestSpawnWorkerTeamNotFound(t *testing.T) {
 	defer m.Close()
 
 	ctx := context.Background()
-	_, err := m.SpawnWorker(ctx, "nonexistent", "test", "prompt")
+	_, err := m.SpawnWorker(ctx, "nonexistent", "worker", "test", "prompt")
 	if err == nil {
 		t.Error("expected error when team does not exist")
 	}
@@ -314,20 +321,67 @@ func TestLeaderProcessNotification(t *testing.T) {
 	}
 }
 
-func TestGenerateWorkerID(t *testing.T) {
-	ids := make(map[string]bool)
+func TestGenerateRandomName(t *testing.T) {
+	names := make(map[string]bool)
 	for i := 0; i < 100; i++ {
-		id := generateWorkerID()
-		if !strings.HasPrefix(id, "agent-") {
-			t.Errorf("expected prefix 'agent-', got %q", id)
+		name := generateRandomName()
+		if !strings.HasPrefix(name, "agent-") {
+			t.Errorf("expected prefix 'agent-', got %q", name)
 		}
-		if len(id) != 12 { // "agent-" (6) + 6 hex chars
-			t.Errorf("expected length 12, got %d for %q", len(id), id)
+		if len(name) != 12 { // "agent-" (6) + 6 hex chars
+			t.Errorf("expected length 12, got %d for %q", len(name), name)
 		}
-		if ids[id] {
-			t.Errorf("duplicate worker ID generated: %s", id)
+		if names[name] {
+			t.Errorf("duplicate name generated: %s", name)
 		}
-		ids[id] = true
+		names[name] = true
+	}
+}
+
+func TestSpawnWorkerDuplicateID(t *testing.T) {
+	store := tasks.NewStore()
+	m := NewManager(store, nil, nil, nil, "/tmp", "/tmp", "test-session")
+	defer m.Close()
+
+	m.CreateTeam("gamma")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	_, err := m.SpawnWorker(ctx, "gamma", "tester", "first worker", "prompt1")
+	if err != nil {
+		t.Fatalf("first SpawnWorker error: %v", err)
+	}
+
+	// Same name in same team should fail
+	_, err = m.SpawnWorker(ctx, "gamma", "tester", "second worker", "prompt2")
+	if err == nil {
+		t.Error("expected error for duplicate agent name in same team")
+	}
+}
+
+func TestSpawnWorkerEmptyName(t *testing.T) {
+	store := tasks.NewStore()
+	m := NewManager(store, nil, nil, nil, "/tmp", "/tmp", "test-session")
+	defer m.Close()
+
+	m.CreateTeam("delta")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	w, err := m.SpawnWorker(ctx, "delta", "", "auto-named worker", "prompt")
+	if err != nil {
+		t.Fatalf("SpawnWorker error: %v", err)
+	}
+
+	// Should have a random name in agent-{hex6} format
+	if !strings.HasPrefix(w.AgentName, "agent-") {
+		t.Errorf("expected auto-generated name with 'agent-' prefix, got %q", w.AgentName)
+	}
+	// ID should be agentName@teamName
+	if !strings.HasSuffix(w.ID, "@delta") {
+		t.Errorf("expected ID to end with '@delta', got %q", w.ID)
 	}
 }
 

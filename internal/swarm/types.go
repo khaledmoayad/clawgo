@@ -19,7 +19,9 @@ const (
 
 // Worker represents a spawned agent goroutine executing a task.
 type Worker struct {
-	ID          string             // Unique ID (format: agent-{random6hex})
+	ID          string             // Unique deterministic ID (format: agentName@teamName)
+	AgentName   string             // Agent name component of the ID
+	TeamName    string             // Team name component of the ID
 	Description string             // Human-readable description of the worker's task
 	TaskID      string             // References tasks.Store task ID for lifecycle tracking
 	InputCh     chan string         // Buffered channel for follow-up messages from SendMessage

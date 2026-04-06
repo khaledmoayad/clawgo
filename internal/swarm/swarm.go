@@ -130,7 +130,11 @@ func (m *Manager) GetTeam(name string) (*Team, bool) {
 // SpawnWorker creates a new worker agent goroutine in the specified team.
 // The worker runs a query loop with the given prompt and sends a TaskNotification
 // to notifyCh upon completion.
-func (m *Manager) SpawnWorker(ctx context.Context, teamName, description, prompt string) (*Worker, error) {
+//
+// agentName is the human-readable name for the worker (e.g., "researcher", "tester").
+// The worker ID is deterministic: agentName@teamName (matching TS agentId.ts format).
+// If agentName is empty, a random hex name is generated as a fallback.
+func (m *Manager) SpawnWorker(ctx context.Context, teamName, agentName, description, prompt string) (*Worker, error) {
 	m.mu.Lock()
 
 	team, ok := m.teams[teamName]
@@ -139,8 +143,19 @@ func (m *Manager) SpawnWorker(ctx context.Context, teamName, description, prompt
 		return nil, fmt.Errorf("team %q not found", teamName)
 	}
 
-	// Generate unique worker ID: agent-{random6hex}
-	workerID := generateWorkerID()
+	// Sanitize agent name and generate deterministic ID
+	if agentName == "" {
+		agentName = generateRandomName()
+	} else {
+		agentName = SanitizeAgentName(agentName)
+	}
+	workerID := FormatAgentID(agentName, teamName)
+
+	// Check for duplicate worker ID (same name in same team)
+	if _, exists := m.workers[workerID]; exists {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("worker %q already exists in team %q", agentName, teamName)
+	}
 
 	// Create cancellable context for the worker
 	workerCtx, cancel := context.WithCancel(ctx)
@@ -150,6 +165,8 @@ func (m *Manager) SpawnWorker(ctx context.Context, teamName, description, prompt
 
 	w := &Worker{
 		ID:          workerID,
+		AgentName:   agentName,
+		TeamName:    teamName,
 		Description: description,
 		TaskID:      task.ID,
 		InputCh:     make(chan string, 10),
@@ -200,6 +217,12 @@ func (m *Manager) runWorker(ctx context.Context, w *Worker, prompt string, task 
 		}
 	}
 
+	// Build system prompt with teammate addendum for proper team communication
+	defaultParts := []string{
+		fmt.Sprintf("You are a worker agent (ID: %s). Complete the assigned task using available tools. Be focused and efficient.", w.ID),
+	}
+	systemPrompt := BuildTeammateSystemPrompt(SystemPromptDefault, "", defaultParts, "")
+
 	params := &query.LoopParams{
 		Client:      m.client,
 		Registry:    m.registry,
@@ -208,7 +231,7 @@ func (m *Manager) runWorker(ctx context.Context, w *Worker, prompt string, task 
 		Messages: []api.Message{
 			api.UserMessage(prompt),
 		},
-		SystemPrompt: fmt.Sprintf("You are a worker agent. Complete the assigned task using available tools. Be focused and efficient. Your worker ID is %s.", w.ID),
+		SystemPrompt: systemPrompt,
 		MaxTurns:     30,
 		WorkingDir:   m.workingDir,
 		ProjectRoot:  m.projectRoot,
@@ -343,8 +366,9 @@ func (m *Manager) Close() {
 	close(m.notifyCh)
 }
 
-// generateWorkerID creates a unique worker ID in the format agent-{random6hex}.
-func generateWorkerID() string {
+// generateRandomName creates a random agent name as a fallback when no
+// explicit name is provided. Format: agent-{random6hex}.
+func generateRandomName() string {
 	b := make([]byte, 3)
 	_, _ = rand.Read(b)
 	return "agent-" + hex.EncodeToString(b)
