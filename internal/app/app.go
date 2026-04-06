@@ -473,6 +473,8 @@ func Run(ctx context.Context, params *RunParams, cfg *config.Config, settings *c
 			JSONSchema:             params.JSONSchema,
 			// Budget control
 			MaxBudgetUSD: params.MaxBudgetUSD,
+			// Session persistence (SDK-03)
+			NoSessionPersistence: params.NoSessionPersistence,
 			// Model info
 			Model: client.Model,
 		})

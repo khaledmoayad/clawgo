@@ -13,6 +13,7 @@ import (
 	"github.com/khaledmoayad/clawgo/internal/cost"
 	"github.com/khaledmoayad/clawgo/internal/permissions"
 	"github.com/khaledmoayad/clawgo/internal/query"
+	"github.com/khaledmoayad/clawgo/internal/session"
 	"github.com/khaledmoayad/clawgo/internal/tools"
 )
 
@@ -45,6 +46,9 @@ type NonInteractiveParams struct {
 	// Budget control (CLI-03)
 	MaxBudgetUSD float64
 
+	// Session persistence (SDK-03, SDK-04)
+	NoSessionPersistence bool // When true, do not persist session to JSONL
+
 	// Model info for output messages
 	Model string
 }
@@ -53,6 +57,18 @@ type NonInteractiveParams struct {
 // OutputFormat. Supports text (default), json, and stream-json formats.
 func RunNonInteractive(ctx context.Context, params *NonInteractiveParams) error {
 	startTime := time.Now()
+
+	// Load prior session messages if SessionID is provided and session file exists.
+	// This enables multi-turn non-interactive usage (e.g., piped scripts).
+	if params.SessionID != "" && params.WorkingDir != "" && len(params.Messages) == 0 {
+		sessionPath := session.GetSessionPath(params.WorkingDir, params.SessionID)
+		if _, err := os.Stat(sessionPath); err == nil {
+			entries, err := session.LoadSession(sessionPath)
+			if err == nil {
+				params.Messages = session.EntriesToMessages(entries)
+			}
+		}
+	}
 
 	// Add user message
 	params.Messages = append(params.Messages, api.UserMessage(params.Prompt))
@@ -287,6 +303,24 @@ func RunNonInteractive(ctx context.Context, params *NonInteractiveParams) error 
 	// Return loop error for non-text formats too (after output is written)
 	if loopErr != nil && format != "text" {
 		return nil // Error is captured in the result message; don't double-report
+	}
+
+	// Persist session to JSONL if enabled (SDK-03, SDK-04).
+	// Uses session.WriteEntry directly to avoid importing the sdk package (circular dep).
+	if !params.NoSessionPersistence && params.SessionID != "" && params.WorkingDir != "" {
+		sessionPath := session.GetSessionPath(params.WorkingDir, params.SessionID)
+		ct := session.NewChainTracker()
+		now := time.Now().UTC().Format(time.RFC3339)
+		meta := session.SerializedMessage{
+			SessionID: params.SessionID,
+			Timestamp: now,
+			Version:   "1.0.0",
+		}
+		for _, msg := range loopParams.Messages {
+			tm := session.TranscriptFromMessage(msg, ct, meta)
+			// Best-effort: don't fail the entire operation if session save fails.
+			_ = session.AppendTranscriptMessage(sessionPath, tm)
+		}
 	}
 
 	return nil
