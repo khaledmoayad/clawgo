@@ -138,61 +138,86 @@ func RunLoop(ctx context.Context, params *LoopParams) error {
 
 		// === Error handling ===
 
-		// Handle media size errors (Plan 02)
-		if streamError != nil && IsMediaSizeError(streamError) {
-			state.Messages = HandleMediaSizeError(state.Messages)
-			// Retry with cleaned messages
-			continue
-		}
-
-		// Handle prompt-too-long errors with reactive compaction
-		if streamError != nil && compact.IsPromptTooLongError(streamError) {
-			// Discard streaming executor on error
-			if streamingExecutor != nil {
-				streamingExecutor.Discard()
-			}
-
-			// Try draining staged context collapses before reactive compact
-			if params.Collapser != nil && params.Collapser.StagedCount() > 0 {
-				recovered, drained := params.Collapser.RecoverFromOverflow(state.Messages)
-				if drained {
-					state.Messages = recovered
-					state.SetTransition(SiteCollapseDrain)
-					continue
-				}
-			}
-
-			if !state.HasAttemptedReactiveCompact {
-				state.HasAttemptedReactiveCompact = true
-
-				compactParams := compact.CompactParams{
-					Client:             params.Client,
-					Model:              params.Client.Model,
-					Messages:           state.Messages,
-					SystemPrompt:       params.SystemPrompt,
-					CustomInstructions: params.CompactCustomInstructions,
-				}
-				result, compactErr := compact.ReactiveCompact(ctx, compactParams, streamError)
-				if compactErr == nil && result != nil && result.WasCompacted {
-					// Tombstone orphaned messages and strip signatures (Plan 02)
-					tombstoned, _ := TombstoneOrphanedMessages(state.Messages, 0)
-					stripped := StripSignatureBlocks(tombstoned)
-
-					state.Messages = []api.Message{
-						api.UserMessage("[Previous conversation compacted]\n\n" + result.Summary),
-					}
-					// Preserve any non-compacted messages after stripping
-					_ = stripped
-
-					state.SetTransition(SiteReactiveCompact)
-					continue
-				}
-			}
-			return streamError
-		}
-
-		// Other stream errors
 		if streamError != nil {
+			// Classify the error for structured handling and display
+			errInfo := api.ClassifyAPIError(streamError, params.Client.Model, params.TextCallback != nil)
+
+			// Handle media size errors (Plan 02) -- check both structured
+			// classification and raw message for maximum coverage
+			if IsMediaSizeError(streamError) || (errInfo != nil && errInfo.Type == api.ErrTypeImageTooLarge) {
+				state.Messages = HandleMediaSizeError(state.Messages)
+				// Retry with cleaned messages
+				continue
+			}
+
+			// Handle prompt-too-long errors with reactive compaction
+			if compact.IsPromptTooLongError(streamError) || (errInfo != nil && errInfo.Type == api.ErrTypePromptTooLong) {
+				// Discard streaming executor on error
+				if streamingExecutor != nil {
+					streamingExecutor.Discard()
+				}
+
+				// Extract token gap for smarter reactive compaction (Plan 15)
+				tokenGap := api.GetPromptTooLongTokenGap(streamError.Error())
+				_ = tokenGap // Available for future compaction heuristics
+
+				// Try draining staged context collapses before reactive compact
+				if params.Collapser != nil && params.Collapser.StagedCount() > 0 {
+					recovered, drained := params.Collapser.RecoverFromOverflow(state.Messages)
+					if drained {
+						state.Messages = recovered
+						state.SetTransition(SiteCollapseDrain)
+						continue
+					}
+				}
+
+				if !state.HasAttemptedReactiveCompact {
+					state.HasAttemptedReactiveCompact = true
+
+					compactParams := compact.CompactParams{
+						Client:             params.Client,
+						Model:              params.Client.Model,
+						Messages:           state.Messages,
+						SystemPrompt:       params.SystemPrompt,
+						CustomInstructions: params.CompactCustomInstructions,
+					}
+					result, compactErr := compact.ReactiveCompact(ctx, compactParams, streamError)
+					if compactErr == nil && result != nil && result.WasCompacted {
+						// Tombstone orphaned messages and strip signatures (Plan 02)
+						tombstoned, _ := TombstoneOrphanedMessages(state.Messages, 0)
+						stripped := StripSignatureBlocks(tombstoned)
+
+						state.Messages = []api.Message{
+							api.UserMessage("[Previous conversation compacted]\n\n" + result.Summary),
+						}
+						// Preserve any non-compacted messages after stripping
+						_ = stripped
+
+						state.SetTransition(SiteReactiveCompact)
+						continue
+					}
+				}
+
+				// Send classified error to TUI before returning
+				if errInfo != nil && params.Program != nil {
+					params.Program.Send(tui.APIErrorMsg{ErrorInfo: errInfo})
+				}
+				return streamError
+			}
+
+			// Send classified error info to TUI for structured display
+			if errInfo != nil && params.Program != nil {
+				// For rate limit errors, also extract quota status
+				var quotaStatus *api.QuotaStatus
+				if errInfo.Type == api.ErrTypeRateLimit {
+					quotaStatus = api.ExtractQuotaFromError(streamError)
+				}
+				params.Program.Send(tui.APIErrorMsg{
+					ErrorInfo:   errInfo,
+					QuotaStatus: quotaStatus,
+				})
+			}
+
 			// Fire stop failure hooks on API error (fire-and-forget, Plan 04)
 			if params.HookRunner != nil && len(state.Messages) > 0 {
 				lastMsg := state.Messages[len(state.Messages)-1]

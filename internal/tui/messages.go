@@ -122,3 +122,14 @@ type ToastMsg struct {
 	Level   string
 	Message string
 }
+
+// APIErrorMsg carries a classified API error to the TUI for user-facing display.
+// This replaces raw error strings with structured error info that includes
+// category, user message, and recovery information.
+type APIErrorMsg struct {
+	// ErrorInfo is the classified error from api.ClassifyAPIError().
+	ErrorInfo *api.APIErrorInfo
+
+	// QuotaStatus holds parsed rate limit quota info (nil if not a rate limit error).
+	QuotaStatus *api.QuotaStatus
+}
