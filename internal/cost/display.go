@@ -17,6 +17,13 @@ func FormatCost(usd float64) string {
 	return fmt.Sprintf("$%.2f", usd)
 }
 
+// FormatCostUSD formats a USD cost with "$" prefix and appropriate precision.
+// Uses 4 decimal places for sub-dollar amounts, 2 for larger amounts.
+// This is an alias for FormatCost, named to match the TypeScript convention.
+func FormatCostUSD(usd float64) string {
+	return FormatCost(usd)
+}
+
 // FormatUsage returns a one-line session usage summary.
 // Example: "Tokens: 1234 in / 567 out | Cost: $0.0185"
 func FormatUsage(t *Tracker) string {

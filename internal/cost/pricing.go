@@ -11,6 +11,17 @@ type ModelPricing struct {
 	CacheReadInputPerToken     float64
 }
 
+// modelAliases maps short/latest model names to their dated versions.
+// This mirrors the TypeScript behavior where aliases like "claude-sonnet-4"
+// resolve to the specific dated version for pricing lookup.
+var modelAliases = map[string]string{
+	"claude-sonnet-4":          "claude-sonnet-4-20250514",
+	"claude-opus-4":            "claude-opus-4-20250514",
+	"claude-3-5-sonnet-latest": "claude-3-5-sonnet-20241022",
+	"claude-3-5-haiku-latest":  "claude-3-5-haiku-20241022",
+	"claude-haiku-3-5":         "claude-haiku-3-5-20241022",
+}
+
 // Pricing table: values are in USD per million tokens.
 // These are divided by 1,000,000 in GetPricing to return per-token prices.
 var pricingTable = map[string]pricingEntry{
@@ -28,8 +39,15 @@ var pricingTable = map[string]pricingEntry{
 		cacheCreationInputPerMTok: 18.75,
 		cacheReadInputPerMTok:     1.50,
 	},
-	// Claude Haiku 3.5
+	// Claude Haiku 3.5 (also known as claude-3-5-haiku)
 	"claude-haiku-3-5-20241022": {
+		inputPerMTok:              0.80,
+		outputPerMTok:             4.0,
+		cacheCreationInputPerMTok: 1.0,
+		cacheReadInputPerMTok:     0.08,
+	},
+	// Claude 3.5 Haiku (alternate naming convention, same model)
+	"claude-3-5-haiku-20241022": {
 		inputPerMTok:              0.80,
 		outputPerMTok:             4.0,
 		cacheCreationInputPerMTok: 1.0,
@@ -41,6 +59,13 @@ var pricingTable = map[string]pricingEntry{
 		outputPerMTok:             15.0,
 		cacheCreationInputPerMTok: 3.75,
 		cacheReadInputPerMTok:     0.30,
+	},
+	// Claude 3 Haiku (older, cheaper model)
+	"claude-3-haiku-20240307": {
+		inputPerMTok:              0.25,
+		outputPerMTok:             1.25,
+		cacheCreationInputPerMTok: 0.30,
+		cacheReadInputPerMTok:     0.03,
 	},
 }
 
@@ -62,8 +87,13 @@ type pricingEntry struct {
 const perMillion = 1_000_000.0
 
 // GetPricing returns the per-token pricing for a model.
-// Falls back to default pricing (Sonnet 4 rates) for unknown models.
+// Resolves aliases (e.g. "claude-sonnet-4" -> "claude-sonnet-4-20250514")
+// before lookup. Falls back to default pricing (Sonnet 4 rates) for unknown models.
 func GetPricing(model string) ModelPricing {
+	// Resolve alias to dated version
+	if resolved, ok := modelAliases[model]; ok {
+		model = resolved
+	}
 	entry, ok := pricingTable[model]
 	if !ok {
 		entry = defaultPricing
