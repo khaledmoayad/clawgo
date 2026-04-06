@@ -71,7 +71,7 @@ func ResolveAPIKey(cfg *Config) string {
 		return cfg.PrimaryAPIKey
 	}
 
-	// 4. Check credentials file
+	// 4. Check credentials file (apiKey field)
 	credsPath := CredentialsPath()
 	data, err := os.ReadFile(credsPath)
 	if err != nil {
@@ -82,7 +82,25 @@ func ResolveAPIKey(cfg *Config) string {
 	if err := json.Unmarshal(data, &creds); err != nil {
 		return ""
 	}
-	return creds.APIKey
+	if creds.APIKey != "" {
+		return creds.APIKey
+	}
+
+	// 5. Check claudeAiOauth in credentials file
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return ""
+	}
+	if oauthData, ok := raw["claudeAiOauth"]; ok {
+		var oauth struct {
+			AccessToken string `json:"accessToken"`
+		}
+		if err := json.Unmarshal(oauthData, &oauth); err == nil && oauth.AccessToken != "" {
+			return oauth.AccessToken
+		}
+	}
+
+	return ""
 }
 
 const defaultAPIBaseURL = "https://api.anthropic.com"

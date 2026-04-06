@@ -412,14 +412,18 @@ func Run(ctx context.Context, params *RunParams, cfg *config.Config, settings *c
 	}
 
 	// --thinking: configure thinking mode
+	// Only enable thinking for models that support it (Opus family)
+	modelSupportsThinking := strings.Contains(client.Model, "opus")
 	switch params.Thinking {
 	case "disabled":
 		streamCfg.Thinking = nil
 	case "enabled", "adaptive":
-		streamCfg.Thinking = &api.ThinkingConfig{Adaptive: true}
+		if modelSupportsThinking {
+			streamCfg.Thinking = &api.ThinkingConfig{Adaptive: true}
+		}
 	default:
-		// Default: enable adaptive thinking unless disabled by env var
-		if os.Getenv("CLAUDE_CODE_DISABLE_THINKING") != "true" {
+		// Default: enable adaptive thinking for Opus models unless disabled
+		if modelSupportsThinking && os.Getenv("CLAUDE_CODE_DISABLE_THINKING") != "true" {
 			streamCfg.Thinking = &api.ThinkingConfig{
 				Adaptive: true,
 			}

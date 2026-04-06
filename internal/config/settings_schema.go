@@ -1,11 +1,44 @@
 package config
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"fmt"
+	"strings"
+)
 
 // PermissionRule represents a single permission rule with tool and optional matcher.
+// It can be unmarshaled from either a string like "Bash(git:*)" or an object like {"tool":"Bash","matcher":"git:*"}.
 type PermissionRule struct {
 	Tool    string `json:"tool"`
 	Matcher string `json:"matcher,omitempty"`
+}
+
+// UnmarshalJSON handles both string and object forms of permission rules.
+func (r *PermissionRule) UnmarshalJSON(data []byte) error {
+	// Try string form first: "Bash(git:*)" or just "Edit"
+	var s string
+	if err := json.Unmarshal(data, &s); err == nil {
+		// Parse "Tool(matcher)" or just "Tool"
+		if idx := strings.Index(s, "("); idx != -1 && strings.HasSuffix(s, ")") {
+			r.Tool = s[:idx]
+			r.Matcher = s[idx+1 : len(s)-1]
+		} else {
+			r.Tool = s
+		}
+		return nil
+	}
+	// Try object form: {"tool": "Bash", "matcher": "git:*"}
+	type plain struct {
+		Tool    string `json:"tool"`
+		Matcher string `json:"matcher,omitempty"`
+	}
+	var p plain
+	if err := json.Unmarshal(data, &p); err != nil {
+		return fmt.Errorf("permission rule must be a string or {tool, matcher} object: %w", err)
+	}
+	r.Tool = p.Tool
+	r.Matcher = p.Matcher
+	return nil
 }
 
 // Permissions represents the permissions section of settings.

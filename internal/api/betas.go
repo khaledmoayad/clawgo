@@ -34,19 +34,11 @@ const (
 func GetMessagesBetas(provider ProviderType) []string {
 	// Core betas shared across all providers
 	betas := []string{
-		BetaClaudeCode,
 		BetaInterleavedThinking,
-		BetaContext1M,
-		BetaContextManagement,
 		BetaStructuredOutputs,
 		BetaWebSearch,
 		BetaEffort,
-		BetaTaskBudgets,
-		BetaPromptCachingScope,
-		BetaFastMode,
-		BetaRedactThinking,
 		BetaTokenEfficientTools,
-		BetaAdvisor,
 	}
 
 	switch provider {
