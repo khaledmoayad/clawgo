@@ -16,9 +16,6 @@ import (
 // maxAPIImageBase64Size is the API limit for base64-encoded image data (5MB).
 const maxAPIImageBase64Size = 5 * 1024 * 1024
 
-// noContentMessage is the placeholder text inserted for empty assistant content.
-const noContentMessage = "[No message content]"
-
 // NormalizeMessagesForAPI applies the complete 14-step normalization pipeline
 // to a message slice before sending to the Anthropic API. The steps are:
 //
@@ -64,17 +61,12 @@ func NormalizeMessagesForAPI(messages []api.Message, toolNames []string) []api.M
 	// Step 7: Hoist tool results in merged messages
 	filtered = hoistAllToolResults(filtered)
 
-	// Step 8: Filter orphaned thinking-only assistant messages
-	filtered = filterOrphanedThinkingMessages(filtered)
-
-	// Step 9: Filter trailing thinking from last assistant
-	filtered = filterTrailingThinking(filtered)
-
-	// Step 10: Filter whitespace-only assistant messages
-	filtered = filterWhitespaceOnlyAssistants(filtered)
-
-	// Step 11: Ensure non-empty assistant content
-	filtered = ensureNonEmptyAssistantContent(filtered)
+	// Steps 8-11: Thinking rule enforcement (from thinking.go)
+	// Order is critical: orphan filter -> trailing thinking -> whitespace -> empty content
+	filtered = FilterOrphanedThinkingMessages(filtered)
+	filtered = FilterTrailingThinking(filtered)
+	filtered = FilterWhitespaceOnlyAssistants(filtered)
+	filtered = EnsureNonEmptyAssistantContent(filtered)
 
 	// Step 12: Merge any remaining adjacent user messages
 	// (orphan/whitespace filtering may create new adjacencies)
@@ -386,224 +378,6 @@ func hoistToolResults(content []api.ContentBlock) []api.ContentBlock {
 	return result
 }
 
-// --- Step 8: Filter orphaned thinking-only assistant messages ---
-
-// filterOrphanedThinkingMessages removes assistant messages that contain ONLY
-// thinking/redacted_thinking blocks and have no sibling assistant message with
-// the same MessageID that contains non-thinking content. These orphaned
-// thinking messages cause "thinking blocks cannot be modified" API errors.
-func filterOrphanedThinkingMessages(messages []api.Message) []api.Message {
-	// First pass: collect MessageIDs that have non-thinking content
-	idsWithNonThinking := make(map[string]bool)
-	for _, m := range messages {
-		if m.Role != "assistant" {
-			continue
-		}
-		hasNonThinking := false
-		for _, cb := range m.Content {
-			if cb.Type != api.ContentThinking && cb.Type != api.ContentRedactedThinking {
-				hasNonThinking = true
-				break
-			}
-		}
-		if hasNonThinking && m.MessageID != "" {
-			idsWithNonThinking[m.MessageID] = true
-		}
-	}
-
-	// Second pass: filter out truly orphaned thinking-only messages
-	result := make([]api.Message, 0, len(messages))
-	for _, m := range messages {
-		if m.Role != "assistant" {
-			result = append(result, m)
-			continue
-		}
-
-		if len(m.Content) == 0 {
-			result = append(result, m)
-			continue
-		}
-
-		// Check if ALL content blocks are thinking blocks
-		allThinking := true
-		for _, cb := range m.Content {
-			if cb.Type != api.ContentThinking && cb.Type != api.ContentRedactedThinking {
-				allThinking = false
-				break
-			}
-		}
-
-		if !allThinking {
-			result = append(result, m)
-			continue
-		}
-
-		// It's thinking-only. Keep if there's another message with same ID
-		// that has non-thinking content (they'll be merged)
-		if m.MessageID != "" && idsWithNonThinking[m.MessageID] {
-			result = append(result, m)
-			continue
-		}
-
-		// Truly orphaned -- skip it
-	}
-	return result
-}
-
-// --- Step 9: Filter trailing thinking from last assistant ---
-
-// filterTrailingThinking removes thinking blocks from the trailing position
-// of the last assistant message. These can cause issues with the API when
-// they appear at the end of the conversation.
-func filterTrailingThinking(messages []api.Message) []api.Message {
-	if len(messages) == 0 {
-		return messages
-	}
-
-	lastMsg := messages[len(messages)-1]
-	if lastMsg.Role != "assistant" {
-		return messages
-	}
-
-	content := lastMsg.Content
-	if len(content) == 0 {
-		return messages
-	}
-
-	// Check if the last block is a thinking block
-	lastBlock := content[len(content)-1]
-	if !isThinkingBlock(lastBlock) {
-		return messages
-	}
-
-	// Find the last non-thinking block
-	lastValidIndex := len(content) - 1
-	for lastValidIndex >= 0 {
-		if !isThinkingBlock(content[lastValidIndex]) {
-			break
-		}
-		lastValidIndex--
-	}
-
-	// Build filtered content
-	var filteredContent []api.ContentBlock
-	if lastValidIndex < 0 {
-		// All blocks were thinking -- insert placeholder
-		filteredContent = []api.ContentBlock{
-			{Type: api.ContentText, Text: noContentMessage},
-		}
-	} else {
-		filteredContent = make([]api.ContentBlock, lastValidIndex+1)
-		copy(filteredContent, content[:lastValidIndex+1])
-	}
-
-	result := make([]api.Message, len(messages))
-	copy(result, messages)
-	result[len(messages)-1] = api.Message{
-		Role:      lastMsg.Role,
-		Content:   filteredContent,
-		MessageID: lastMsg.MessageID,
-	}
-	return result
-}
-
-// --- Step 10: Filter whitespace-only assistant messages ---
-
-// filterWhitespaceOnlyAssistants removes assistant messages that contain only
-// whitespace-only text blocks. The API requires "text content blocks must
-// contain non-whitespace text". After removal, adjacent user messages are
-// merged to maintain alternating roles.
-func filterWhitespaceOnlyAssistants(messages []api.Message) []api.Message {
-	hasChanges := false
-	filtered := make([]api.Message, 0, len(messages))
-
-	for _, m := range messages {
-		if m.Role != "assistant" {
-			filtered = append(filtered, m)
-			continue
-		}
-
-		if len(m.Content) == 0 {
-			// Keep messages with empty content (handled elsewhere)
-			filtered = append(filtered, m)
-			continue
-		}
-
-		if hasOnlyWhitespaceTextContent(m.Content) {
-			hasChanges = true
-			continue // Skip this message
-		}
-
-		filtered = append(filtered, m)
-	}
-
-	if !hasChanges {
-		return messages
-	}
-
-	// Removing assistants may leave adjacent user messages; merge them
-	return mergeConsecutiveUsers(filtered)
-}
-
-// hasOnlyWhitespaceTextContent returns true if all content blocks are text
-// blocks with only whitespace content. Returns false if there are any
-// non-text blocks or text blocks with actual content.
-func hasOnlyWhitespaceTextContent(content []api.ContentBlock) bool {
-	if len(content) == 0 {
-		return false
-	}
-	for _, block := range content {
-		if block.Type != api.ContentText {
-			return false
-		}
-		if strings.TrimSpace(block.Text) != "" {
-			return false
-		}
-	}
-	return true
-}
-
-// --- Step 11: Ensure non-empty assistant content ---
-
-// ensureNonEmptyAssistantContent adds a placeholder text block to non-final
-// assistant messages that have empty content. The API requires all messages
-// to have non-empty content except for the optional final assistant message
-// (which can be empty for prefill).
-func ensureNonEmptyAssistantContent(messages []api.Message) []api.Message {
-	if len(messages) == 0 {
-		return messages
-	}
-
-	hasChanges := false
-	result := make([]api.Message, len(messages))
-	copy(result, messages)
-
-	for i, m := range result {
-		if m.Role != "assistant" {
-			continue
-		}
-		// Skip the final message (allowed to be empty for prefill)
-		if i == len(result)-1 {
-			continue
-		}
-		if len(m.Content) == 0 {
-			hasChanges = true
-			result[i] = api.Message{
-				Role: m.Role,
-				Content: []api.ContentBlock{
-					{Type: api.ContentText, Text: noContentMessage},
-				},
-				MessageID: m.MessageID,
-			}
-		}
-	}
-
-	if !hasChanges {
-		return messages
-	}
-	return result
-}
-
 // --- Step 13: Sanitize error tool result content ---
 
 // sanitizeErrorToolResultContent strips non-text content from tool_result
@@ -636,12 +410,4 @@ func validateImagesForAPI(messages []api.Message) {
 			}
 		}
 	}
-}
-
-// --- Helpers ---
-
-// isThinkingBlock returns true if the content block is a thinking or
-// redacted_thinking block.
-func isThinkingBlock(block api.ContentBlock) bool {
-	return block.Type == api.ContentThinking || block.Type == api.ContentRedactedThinking
 }

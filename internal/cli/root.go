@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 
 	"github.com/khaledmoayad/clawgo/internal/app"
@@ -255,7 +256,18 @@ func NewRootCmd(version string) *cobra.Command {
 			app.SetupGracefulShutdown(cancel)
 
 			configDir := config.ConfigDir()
-			return daemon.NewScheduler(configDir).Start(ctx)
+			scheduler := daemon.NewCronScheduler(daemon.CronSchedulerOptions{
+				Dir: configDir,
+				OnFire: func(prompt string) {
+					log.Printf("daemon: fired prompt: %s", prompt)
+				},
+			})
+			if err := scheduler.Start(); err != nil {
+				return err
+			}
+			<-ctx.Done()
+			scheduler.Stop()
+			return ctx.Err()
 		},
 	}
 	cmd.AddCommand(daemonCmd)

@@ -18,7 +18,7 @@ type Bridge struct {
 	config      BridgeConfig
 	api         *APIClient
 	pool        *SessionPool
-	workHandler *WorkHandler
+	runner *SessionRunner
 	envID       string
 	envSecret   string
 }
@@ -49,7 +49,7 @@ func (b *Bridge) Start(ctx context.Context) error {
 	b.envSecret = envSecret
 
 	// Create the work handler now that we have an environment ID
-	b.workHandler = NewWorkHandler(b.api, b.envID, b.config)
+	
 
 	// Register cleanup so graceful shutdown deregisters and stops sessions
 	app.RegisterCleanup(b.Stop)
@@ -103,8 +103,18 @@ func (b *Bridge) pollAndDispatch(ctx context.Context) error {
 		return nil
 	}
 
-	if err := b.workHandler.HandleWork(ctx, work, b.pool); err != nil {
+	if err := b.handleWorkItem(ctx, work); err != nil {
 		log.Printf("bridge: failed to handle work %s: %v", work.ID, err)
 	}
 	return nil
+}
+
+// handleWorkItem processes a single work item by spawning a SessionRunner.
+func (b *Bridge) handleWorkItem(ctx context.Context, work *WorkResponse) error {
+	cfg := SessionRunnerConfig{
+		APIClient:     b.api,
+		EnvironmentID: b.envID,
+	}
+	runner := NewSessionRunner(cfg, work)
+	return runner.Run(ctx)
 }
