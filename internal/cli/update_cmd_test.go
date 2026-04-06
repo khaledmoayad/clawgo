@@ -91,6 +91,8 @@ func TestGetLatestReleaseHTTPError(t *testing.T) {
 func TestGetAssetURL(t *testing.T) {
 	assets := []releaseAsset{
 		{Name: "clawgo-linux-amd64", BrowserDownloadURL: "https://example.com/clawgo-linux-amd64"},
+		{Name: "clawgo-linux-arm64", BrowserDownloadURL: "https://example.com/clawgo-linux-arm64"},
+		{Name: "clawgo-darwin-amd64", BrowserDownloadURL: "https://example.com/clawgo-darwin-amd64"},
 		{Name: "clawgo-darwin-arm64", BrowserDownloadURL: "https://example.com/clawgo-darwin-arm64"},
 		{Name: "clawgo-windows-amd64.exe", BrowserDownloadURL: "https://example.com/clawgo-windows-amd64.exe"},
 	}
