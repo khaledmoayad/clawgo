@@ -1,4 +1,9 @@
-.planning/
-.claude/
 .agent/
+.claude/
+.planning/
 CLAUDE.md
+clawgo
+.codex
+.external/
+RUNTIME_TEST_REPORT.md
+RUNTIME_TEST_SUMMARY.txt
