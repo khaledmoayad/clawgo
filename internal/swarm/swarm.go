@@ -281,6 +281,7 @@ func (m *Manager) runWorker(ctx context.Context, w *Worker, prompt string, task 
 }
 
 // sendNotification builds and sends a TaskNotification to the coordinator channel.
+// Safe to call after Close() -- silently recovers from sends on closed channels.
 func (m *Manager) sendNotification(w *Worker, status, summary, result string, startTime time.Time) {
 	notif := TaskNotification{
 		TaskID:     w.ID,
@@ -289,6 +290,11 @@ func (m *Manager) sendNotification(w *Worker, status, summary, result string, st
 		Result:     result,
 		DurationMs: time.Since(startTime).Milliseconds(),
 	}
+
+	// Recover from sending on a closed channel (race with Close())
+	defer func() {
+		recover() //nolint: errcheck
+	}()
 
 	// Non-blocking send to prevent deadlock if coordinator isn't reading
 	select {
