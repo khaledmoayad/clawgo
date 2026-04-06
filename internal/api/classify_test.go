@@ -207,7 +207,7 @@ func TestClassifyAPIError_ImageTooLarge(t *testing.T) {
 }
 
 func TestClassifyAPIError_ToolUseMismatch(t *testing.T) {
-	err := &HTTPError{StatusCode: 400, Message: "`tool_use` ids were found without `tool_result` blocks immediately after"}
+	err := &HTTPError{StatusCode: 400, Body: "`tool_use` ids were found without `tool_result` blocks immediately after"}
 	info := ClassifyAPIError(err, "claude-sonnet-4-20250514", false)
 	if info.Type != ErrTypeToolUseMismatch {
 		t.Errorf("expected ErrTypeToolUseMismatch, got %s", info.Type)
@@ -228,7 +228,7 @@ func TestClassifyAPIError_PDFTooLarge(t *testing.T) {
 
 func TestClassifyAPIError_NonInteractiveMessages(t *testing.T) {
 	// Auth errors should differ between interactive and non-interactive
-	err := &HTTPError{StatusCode: 401, Message: "Unauthorized"}
+	err := &HTTPError{StatusCode: 401, Body: "Unauthorized"}
 
 	interactive := ClassifyAPIError(err, "claude-sonnet-4-20250514", false)
 	nonInteractive := ClassifyAPIError(err, "claude-sonnet-4-20250514", true)
@@ -239,7 +239,7 @@ func TestClassifyAPIError_NonInteractiveMessages(t *testing.T) {
 }
 
 func TestClassifyAPIError_ServerError(t *testing.T) {
-	err := &HTTPError{StatusCode: 500, Message: "Internal server error"}
+	err := &HTTPError{StatusCode: 500, Body: "Internal server error"}
 	info := ClassifyAPIError(err, "claude-sonnet-4-20250514", false)
 	if info.Type != ErrTypeServerError {
 		t.Errorf("expected ErrTypeServerError, got %s", info.Type)
@@ -281,7 +281,7 @@ func TestGetRefusalMessage(t *testing.T) {
 }
 
 func TestClassifyAPIError_RequestTooLarge(t *testing.T) {
-	err := &HTTPError{StatusCode: 413, Message: "Request entity too large"}
+	err := &HTTPError{StatusCode: 413, Body: "Request entity too large"}
 	info := ClassifyAPIError(err, "claude-sonnet-4-20250514", false)
 	if info.Category != ErrClientError {
 		t.Errorf("expected ErrClientError, got %s", info.Category)
@@ -289,7 +289,7 @@ func TestClassifyAPIError_RequestTooLarge(t *testing.T) {
 }
 
 func TestClassifyAPIError_ExtraUsageRequired(t *testing.T) {
-	err := &HTTPError{StatusCode: 429, Message: "Extra usage is required for long context"}
+	err := &HTTPError{StatusCode: 429, Body: "Extra usage is required for long context"}
 	info := ClassifyAPIError(err, "claude-sonnet-4-20250514", false)
 	if info.Type != ErrTypeRateLimit {
 		t.Errorf("expected ErrTypeRateLimit, got %s", info.Type)
@@ -300,7 +300,7 @@ func TestClassifyAPIError_ExtraUsageRequired(t *testing.T) {
 }
 
 func TestClassifyAPIError_DuplicateToolUseID(t *testing.T) {
-	err := &HTTPError{StatusCode: 400, Message: "`tool_use` ids must be unique across all messages"}
+	err := &HTTPError{StatusCode: 400, Body: "`tool_use` ids must be unique across all messages"}
 	info := ClassifyAPIError(err, "claude-sonnet-4-20250514", false)
 	if info.Type != ErrTypeDuplicateToolUseID {
 		t.Errorf("expected ErrTypeDuplicateToolUseID, got %s", info.Type)
@@ -308,7 +308,7 @@ func TestClassifyAPIError_DuplicateToolUseID(t *testing.T) {
 }
 
 func TestClassifyAPIError_OrgNotAllowed(t *testing.T) {
-	err := &HTTPError{StatusCode: 403, Message: "OAuth authentication is currently not allowed for this organization"}
+	err := &HTTPError{StatusCode: 403, Body: "OAuth authentication is currently not allowed for this organization"}
 	info := ClassifyAPIError(err, "claude-sonnet-4-20250514", false)
 	if info.Type != ErrTypeOAuthOrgNotAllowed {
 		t.Errorf("expected ErrTypeOAuthOrgNotAllowed, got %s", info.Type)
@@ -316,7 +316,7 @@ func TestClassifyAPIError_OrgNotAllowed(t *testing.T) {
 }
 
 func TestClassifyAPIError_ModelNotFound(t *testing.T) {
-	err := &HTTPError{StatusCode: 404, Message: "Not found"}
+	err := &HTTPError{StatusCode: 404, Body: "Not found"}
 	info := ClassifyAPIError(err, "claude-nonexistent", false)
 	if info.Type != ErrTypeInvalidModel {
 		t.Errorf("expected ErrTypeInvalidModel, got %s", info.Type)
