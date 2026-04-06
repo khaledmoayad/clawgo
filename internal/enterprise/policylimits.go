@@ -180,3 +180,32 @@ func (m *PolicyLimitsManager) IsCommandAllowed(cmdName string) bool {
 	}
 	return true
 }
+
+// GetMaxTurns returns the organization-level maximum number of query loop turns,
+// or 0 if unlimited. The query loop should call this to enforce org-level turn limits.
+func (m *PolicyLimitsManager) GetMaxTurns() int {
+	return m.GetLimits().MaxTurns
+}
+
+// GetCustomMessage returns the custom message to display when policy blocks something.
+// Returns "" if no custom message is configured.
+func (m *PolicyLimitsManager) GetCustomMessage() string {
+	return m.GetLimits().CustomMessage
+}
+
+// ShouldRequireSandbox returns true if the organization policy requires sandbox mode.
+func (m *PolicyLimitsManager) ShouldRequireSandbox() bool {
+	return m.GetLimits().RequireSandbox
+}
+
+// IsWebSearchAllowed returns true if web search is allowed by policy.
+// Returns true if no limits have been fetched (permissive default).
+func (m *PolicyLimitsManager) IsWebSearchAllowed() bool {
+	return !m.GetLimits().DisableWebSearch
+}
+
+// IsFileWriteAllowed returns true if file write operations are allowed by policy.
+// Returns true if no limits have been fetched (permissive default).
+func (m *PolicyLimitsManager) IsFileWriteAllowed() bool {
+	return !m.GetLimits().DisableFileWrite
+}

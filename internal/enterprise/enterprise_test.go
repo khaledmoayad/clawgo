@@ -175,6 +175,134 @@ func TestPolicyLimitsManager_EmptyLimits(t *testing.T) {
 	}
 }
 
+// --- Enforcement Helper Tests ---
+
+func TestPolicyLimitsManager_GetMaxTurns(t *testing.T) {
+	limits := PolicyLimits{MaxTurns: 50}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(limits)
+	}))
+	defer server.Close()
+
+	mgr := NewPolicyLimitsManager(server.URL, func() string { return "tok" })
+	if err := mgr.Fetch(context.Background()); err != nil {
+		t.Fatalf("Fetch failed: %v", err)
+	}
+
+	if got := mgr.GetMaxTurns(); got != 50 {
+		t.Errorf("GetMaxTurns() = %d, want 50", got)
+	}
+}
+
+func TestPolicyLimitsManager_GetMaxTurns_NoLimits(t *testing.T) {
+	// No fetch performed -- should return 0 (unlimited)
+	mgr := NewPolicyLimitsManager("http://localhost:0", func() string { return "" })
+	if got := mgr.GetMaxTurns(); got != 0 {
+		t.Errorf("GetMaxTurns() = %d, want 0 (no limits fetched)", got)
+	}
+}
+
+func TestPolicyLimitsManager_GetCustomMessage(t *testing.T) {
+	limits := PolicyLimits{CustomMessage: "Contact IT for access"}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(limits)
+	}))
+	defer server.Close()
+
+	mgr := NewPolicyLimitsManager(server.URL, func() string { return "tok" })
+	if err := mgr.Fetch(context.Background()); err != nil {
+		t.Fatalf("Fetch failed: %v", err)
+	}
+
+	if got := mgr.GetCustomMessage(); got != "Contact IT for access" {
+		t.Errorf("GetCustomMessage() = %q, want %q", got, "Contact IT for access")
+	}
+}
+
+func TestPolicyLimitsManager_GetCustomMessage_NoLimits(t *testing.T) {
+	mgr := NewPolicyLimitsManager("http://localhost:0", func() string { return "" })
+	if got := mgr.GetCustomMessage(); got != "" {
+		t.Errorf("GetCustomMessage() = %q, want empty", got)
+	}
+}
+
+func TestPolicyLimitsManager_ShouldRequireSandbox(t *testing.T) {
+	limits := PolicyLimits{RequireSandbox: true}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(limits)
+	}))
+	defer server.Close()
+
+	mgr := NewPolicyLimitsManager(server.URL, func() string { return "tok" })
+	if err := mgr.Fetch(context.Background()); err != nil {
+		t.Fatalf("Fetch failed: %v", err)
+	}
+
+	if !mgr.ShouldRequireSandbox() {
+		t.Error("ShouldRequireSandbox() = false, want true")
+	}
+}
+
+func TestPolicyLimitsManager_ShouldRequireSandbox_NoLimits(t *testing.T) {
+	mgr := NewPolicyLimitsManager("http://localhost:0", func() string { return "" })
+	if mgr.ShouldRequireSandbox() {
+		t.Error("ShouldRequireSandbox() = true, want false (no limits fetched)")
+	}
+}
+
+func TestPolicyLimitsManager_IsWebSearchAllowed(t *testing.T) {
+	limits := PolicyLimits{DisableWebSearch: true}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(limits)
+	}))
+	defer server.Close()
+
+	mgr := NewPolicyLimitsManager(server.URL, func() string { return "tok" })
+	if err := mgr.Fetch(context.Background()); err != nil {
+		t.Fatalf("Fetch failed: %v", err)
+	}
+
+	if mgr.IsWebSearchAllowed() {
+		t.Error("IsWebSearchAllowed() = true, want false (web search disabled)")
+	}
+}
+
+func TestPolicyLimitsManager_IsWebSearchAllowed_NoLimits(t *testing.T) {
+	mgr := NewPolicyLimitsManager("http://localhost:0", func() string { return "" })
+	if !mgr.IsWebSearchAllowed() {
+		t.Error("IsWebSearchAllowed() = false, want true (no limits, permissive default)")
+	}
+}
+
+func TestPolicyLimitsManager_IsFileWriteAllowed(t *testing.T) {
+	limits := PolicyLimits{DisableFileWrite: true}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(limits)
+	}))
+	defer server.Close()
+
+	mgr := NewPolicyLimitsManager(server.URL, func() string { return "tok" })
+	if err := mgr.Fetch(context.Background()); err != nil {
+		t.Fatalf("Fetch failed: %v", err)
+	}
+
+	if mgr.IsFileWriteAllowed() {
+		t.Error("IsFileWriteAllowed() = true, want false (file write disabled)")
+	}
+}
+
+func TestPolicyLimitsManager_IsFileWriteAllowed_NoLimits(t *testing.T) {
+	mgr := NewPolicyLimitsManager("http://localhost:0", func() string { return "" })
+	if !mgr.IsFileWriteAllowed() {
+		t.Error("IsFileWriteAllowed() = false, want true (no limits, permissive default)")
+	}
+}
+
 // --- Settings Sync Tests ---
 
 func TestSettingsSyncManager_Upload(t *testing.T) {
