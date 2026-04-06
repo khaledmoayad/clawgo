@@ -34,6 +34,7 @@ const (
 func GetMessagesBetas(provider ProviderType) []string {
 	// Core betas shared across all providers
 	betas := []string{
+		BetaClaudeCode,
 		BetaInterleavedThinking,
 		BetaStructuredOutputs,
 		BetaWebSearch,

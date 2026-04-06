@@ -224,7 +224,12 @@ func Run(ctx context.Context, params *RunParams, cfg *config.Config, settings *c
 	if alt := config.Env(config.EnvAPIBaseURL); alt != "" {
 		baseURL = alt
 	}
-	client, err := api.NewClient(apiKey, baseURL)
+	// Create API client. OAuth tokens (sk-ant-oat*) are sent as API keys — the
+	// Anthropic SDK handles routing internally. For full OAuth with bearer auth,
+	// the base URL must point to the Claude.ai API (handled by provider config).
+	var client *api.Client
+	var err error
+	client, err = api.NewClient(apiKey, baseURL)
 	if err != nil {
 		return fmt.Errorf("failed to create API client: %w", err)
 	}
