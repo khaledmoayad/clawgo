@@ -195,7 +195,7 @@ func (s *CronScheduler) load(initial bool) error {
 
 // surfaceMissedTasks detects and reports missed one-shot tasks on initial load.
 func (s *CronScheduler) surfaceMissedTasks(tasks []CronTask) {
-	now := nowMs()
+	now := NowMs()
 	missed := FindMissedTasks(tasks, now)
 	if len(missed) == 0 {
 		return
@@ -247,7 +247,7 @@ func (s *CronScheduler) check() {
 		cfg = s.options.GetJitterConfig()
 	}
 
-	now := nowMs()
+	now := NowMs()
 
 	// Collect all tasks to check: file-backed (if owner) + session-scoped
 	var allTasks []CronTask

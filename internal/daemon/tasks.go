@@ -224,6 +224,18 @@ func GetSessionTasks() []CronTask {
 	return result
 }
 
+// RemoveSessionTask removes a single session-scoped task by ID.
+func RemoveSessionTask(id string) {
+	sessionTasksMu.Lock()
+	defer sessionTasksMu.Unlock()
+	for i, t := range sessionTasks {
+		if t.ID == id {
+			sessionTasks = append(sessionTasks[:i], sessionTasks[i+1:]...)
+			return
+		}
+	}
+}
+
 // ClearSessionTasks removes all session-scoped tasks.
 func ClearSessionTasks() {
 	sessionTasksMu.Lock()
@@ -448,6 +460,103 @@ func parseCronField(field string, min, max int) map[int]bool {
 	return result
 }
 
+// HumanReadableSchedule converts a 5-field cron expression to a human-readable string.
+// Examples: "*/5 * * * *" -> "Every 5 minutes", "0 9 * * 1" -> "At 09:00 on Monday".
+func HumanReadableSchedule(cron string) string {
+	fields := strings.Fields(cron)
+	if len(fields) != 5 {
+		return cron
+	}
+	minute, hour, dom, month, dow := fields[0], fields[1], fields[2], fields[3], fields[4]
+
+	// Every minute
+	if minute == "*" && hour == "*" && dom == "*" && month == "*" && dow == "*" {
+		return "Every minute"
+	}
+
+	// */N patterns
+	if strings.HasPrefix(minute, "*/") && hour == "*" && dom == "*" && month == "*" && dow == "*" {
+		return "Every " + strings.TrimPrefix(minute, "*/") + " minutes"
+	}
+	if minute == "0" && strings.HasPrefix(hour, "*/") && dom == "*" && month == "*" && dow == "*" {
+		return "Every " + strings.TrimPrefix(hour, "*/") + " hours"
+	}
+
+	// Daily at specific time
+	if minute != "*" && hour != "*" && dom == "*" && month == "*" && dow == "*" &&
+		!strings.Contains(minute, "/") && !strings.Contains(hour, "/") &&
+		!strings.Contains(minute, "-") && !strings.Contains(hour, "-") &&
+		!strings.Contains(minute, ",") && !strings.Contains(hour, ",") {
+		return fmt.Sprintf("Daily at %s:%s", zeroPad(hour), zeroPad(minute))
+	}
+
+	// Specific day of week
+	if minute != "*" && hour != "*" && dom == "*" && month == "*" && dow != "*" &&
+		!strings.Contains(minute, "/") && !strings.Contains(hour, "/") &&
+		!strings.Contains(dow, "/") && !strings.Contains(dow, "-") {
+		dayStr := dowName(dow)
+		return fmt.Sprintf("At %s:%s on %s", zeroPad(hour), zeroPad(minute), dayStr)
+	}
+
+	// Specific day of month
+	if minute != "*" && hour != "*" && dom != "*" && month == "*" && dow == "*" &&
+		!strings.Contains(minute, "/") && !strings.Contains(hour, "/") &&
+		!strings.Contains(dom, "/") && !strings.Contains(dom, "-") {
+		return fmt.Sprintf("At %s:%s on day %s of every month", zeroPad(hour), zeroPad(minute), dom)
+	}
+
+	// Hourly at minute N
+	if minute != "*" && hour == "*" && dom == "*" && month == "*" && dow == "*" &&
+		!strings.Contains(minute, "/") && !strings.Contains(minute, "-") &&
+		!strings.Contains(minute, ",") {
+		return fmt.Sprintf("Hourly at :%s", zeroPad(minute))
+	}
+
+	// Fallback: return the raw expression
+	return cron
+}
+
+// zeroPad adds a leading zero for single-digit time components.
+func zeroPad(s string) string {
+	if len(s) == 1 {
+		return "0" + s
+	}
+	return s
+}
+
+// dowName converts a cron day-of-week number or comma list to a readable name.
+func dowName(dow string) string {
+	names := map[string]string{
+		"0": "Sunday", "1": "Monday", "2": "Tuesday", "3": "Wednesday",
+		"4": "Thursday", "5": "Friday", "6": "Saturday", "7": "Sunday",
+	}
+	// Handle comma-separated days
+	parts := strings.Split(dow, ",")
+	var dayNames []string
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if n, ok := names[p]; ok {
+			dayNames = append(dayNames, n)
+		} else {
+			dayNames = append(dayNames, p)
+		}
+	}
+	return strings.Join(dayNames, ", ")
+}
+
+// MaxCronJobs is the maximum number of concurrent cron jobs allowed (matching TS MAX_JOBS).
+const MaxCronJobs = 50
+
+// CountAllTasks returns the total count of file-backed + session-scoped tasks.
+func CountAllTasks(dir string) (int, error) {
+	fileTasks, err := ReadCronTasks(dir)
+	if err != nil {
+		return 0, err
+	}
+	sessionTasks := GetSessionTasks()
+	return len(fileTasks) + len(sessionTasks), nil
+}
+
 // CalculateNextRun computes the next execution time after from based on the cron expression.
 // This is used internally -- prefer NextCronRunMs for the epoch-ms interface.
 func CalculateNextRun(cronExpr string, from time.Time) time.Time {
@@ -459,8 +568,8 @@ func CalculateNextRun(cronExpr string, from time.Time) time.Time {
 	return time.UnixMilli(*nextMs)
 }
 
-// nowMs returns the current time in epoch milliseconds.
-func nowMs() int64 {
+// NowMs returns the current time in epoch milliseconds.
+func NowMs() int64 {
 	return time.Now().UnixMilli()
 }
 

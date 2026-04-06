@@ -659,3 +659,74 @@ func TestParseCronField(t *testing.T) {
 	assert.True(t, f4[5])
 	assert.False(t, f4[2])
 }
+
+func TestHumanReadableSchedule(t *testing.T) {
+	tests := []struct {
+		cron     string
+		expected string
+	}{
+		{"* * * * *", "Every minute"},
+		{"*/5 * * * *", "Every 5 minutes"},
+		{"*/15 * * * *", "Every 15 minutes"},
+		{"0 */2 * * *", "Every 2 hours"},
+		{"0 9 * * *", "Daily at 09:00"},
+		{"30 14 * * *", "Daily at 14:30"},
+		{"0 9 * * 1", "At 09:00 on Monday"},
+		{"0 9 * * 0", "At 09:00 on Sunday"},
+		{"0 9 * * 1,3,5", "At 09:00 on Monday, Wednesday, Friday"},
+		{"0 0 1 * *", "At 00:00 on day 1 of every month"},
+		{"30 * * * *", "Hourly at :30"},
+		{"0 * * * *", "Hourly at :00"},
+		{"invalid", "invalid"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.cron, func(t *testing.T) {
+			assert.Equal(t, tt.expected, HumanReadableSchedule(tt.cron))
+		})
+	}
+}
+
+func TestRemoveSessionTask(t *testing.T) {
+	ClearSessionTasks()
+	defer ClearSessionTasks()
+
+	id1, err := AddCronTask("* * * * *", "task 1", false, false, "")
+	require.NoError(t, err)
+	id2, err := AddCronTask("* * * * *", "task 2", false, false, "")
+	require.NoError(t, err)
+
+	assert.Len(t, GetSessionTasks(), 2)
+
+	RemoveSessionTask(id1)
+	remaining := GetSessionTasks()
+	assert.Len(t, remaining, 1)
+	assert.Equal(t, id2, remaining[0].ID)
+
+	// Remove non-existent -- should be no-op
+	RemoveSessionTask("nonexistent")
+	assert.Len(t, GetSessionTasks(), 1)
+}
+
+func TestCountAllTasks(t *testing.T) {
+	ClearSessionTasks()
+	defer ClearSessionTasks()
+
+	dir := t.TempDir()
+	now := NowMs()
+
+	// File-backed tasks
+	tasks := []CronTask{
+		{ID: "f1", Cron: "* * * * *", Prompt: "file1", CreatedAt: now},
+		{ID: "f2", Cron: "* * * * *", Prompt: "file2", CreatedAt: now},
+	}
+	require.NoError(t, WriteCronTasks(tasks, dir))
+
+	// Session tasks
+	_, err := AddCronTask("* * * * *", "session1", false, false, "")
+	require.NoError(t, err)
+
+	count, err := CountAllTasks(dir)
+	require.NoError(t, err)
+	assert.Equal(t, 3, count)
+}
