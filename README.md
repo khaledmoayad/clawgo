@@ -16,7 +16,7 @@
 > [!NOTE]
 > **ClawGo is a complete Go rewrite of Claude Code** — Anthropic's CLI for Claude. It's a drop-in replacement that replicates the core feature set as a single compiled binary: faster startup, lower memory, no runtime dependencies.
 >
-> The project is functional with 55 packages, 738 tests, and all core features working. Multi-provider support (Bedrock, Vertex, Foundry), MCP server/client, OAuth, and the full tool system are implemented. Bug reports and contributions welcome — [open an issue](https://github.com/khaledmoayad/clawgo/issues/new) or [reach out](https://github.com/khaledmoayad).
+> The project targets full Claude Code parity with 152 packages, 537 Go files, and 144 test files. Multi-provider support (Bedrock, Vertex, Foundry), MCP server/client with SSE/HTTP/WebSocket transports, OAuth, full tool system with streaming execution, 26 bash security validators, 14-step message normalization, 53 TUI message renderers, virtual scrolling, vim mode, 56 slash commands, and the complete system prompt architecture are implemented. Bug reports and contributions welcome — [open an issue](https://github.com/khaledmoayad/clawgo/issues/new) or [reach out](https://github.com/khaledmoayad).
 
 ---
 
@@ -282,10 +282,10 @@ GOOS=windows GOARCH=amd64 go build -o clawgo.exe ./cmd/clawgo/
 ## Test Suite
 
 ```
-55 packages | 738 tests | 0 failures
+152 packages | 537 Go files | 144 test files
 ```
 
-Every package has tests. Core tools have integration tests with real filesystem and subprocess operations.
+Every package has tests. Core tools have integration tests with real filesystem and subprocess operations. The v2.0 milestone added streaming tool execution, 14-step message normalization, 26 bash security validators, full TUI with virtual scrolling and vim mode, MCP client with all transports, plugin marketplace, memory extraction, and complete system prompt parity.
 
 ---
 
