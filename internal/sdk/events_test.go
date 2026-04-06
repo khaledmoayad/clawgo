@@ -137,3 +137,152 @@ func TestTurnCompleteEvent(t *testing.T) {
 		t.Errorf("Cost = %v, want %v", evt.Cost, 0.05)
 	}
 }
+
+func TestSDKEventResultEvent(t *testing.T) {
+	evt := ResultEvent("Hello world", "session-123", 0.05, 3, false, "end_turn")
+	if evt.Type != EventResult {
+		t.Errorf("Type = %v, want %v", evt.Type, EventResult)
+	}
+	if evt.Result != "Hello world" {
+		t.Errorf("Result = %q, want %q", evt.Result, "Hello world")
+	}
+	if evt.SessionID != "session-123" {
+		t.Errorf("SessionID = %q, want %q", evt.SessionID, "session-123")
+	}
+	if evt.Cost != 0.05 {
+		t.Errorf("Cost = %v, want %v", evt.Cost, 0.05)
+	}
+	if evt.NumTurns != 3 {
+		t.Errorf("NumTurns = %d, want %d", evt.NumTurns, 3)
+	}
+	if evt.IsError {
+		t.Error("IsError should be false")
+	}
+	if evt.StopReason != "end_turn" {
+		t.Errorf("StopReason = %q, want %q", evt.StopReason, "end_turn")
+	}
+}
+
+func TestSDKEventResultEventWithError(t *testing.T) {
+	evt := ResultEvent("", "session-456", 1.50, 1, true, "budget_exceeded")
+	if evt.Type != EventResult {
+		t.Errorf("Type = %v, want %v", evt.Type, EventResult)
+	}
+	if !evt.IsError {
+		t.Error("IsError should be true for error result")
+	}
+	if evt.StopReason != "budget_exceeded" {
+		t.Errorf("StopReason = %q, want %q", evt.StopReason, "budget_exceeded")
+	}
+	if evt.NumTurns != 1 {
+		t.Errorf("NumTurns = %d, want %d", evt.NumTurns, 1)
+	}
+}
+
+func TestSDKEventCompactingEvent(t *testing.T) {
+	// Test start of compaction
+	evt := CompactingEvent("compacting")
+	if evt.Type != EventCompacting {
+		t.Errorf("Type = %v, want %v", evt.Type, EventCompacting)
+	}
+	if evt.Status != "compacting" {
+		t.Errorf("Status = %q, want %q", evt.Status, "compacting")
+	}
+
+	// Test end of compaction
+	evt2 := CompactingEvent("")
+	if evt2.Type != EventCompacting {
+		t.Errorf("Type = %v, want %v", evt2.Type, EventCompacting)
+	}
+	if evt2.Status != "" {
+		t.Errorf("Status = %q, want %q", evt2.Status, "")
+	}
+}
+
+func TestSDKEventUserMessageEvent(t *testing.T) {
+	evt := UserMessageEvent("What is Go?")
+	if evt.Type != EventUserMessage {
+		t.Errorf("Type = %v, want %v", evt.Type, EventUserMessage)
+	}
+	if evt.Text != "What is Go?" {
+		t.Errorf("Text = %q, want %q", evt.Text, "What is Go?")
+	}
+}
+
+func TestSDKEventTypeUniqueness(t *testing.T) {
+	// All event type constants must have unique string values
+	allTypes := []SDKEventType{
+		EventTextDelta,
+		EventThinkingDelta,
+		EventToolUseStart,
+		EventToolUseInput,
+		EventToolUseEnd,
+		EventToolResult,
+		EventTurnComplete,
+		EventCostUpdate,
+		EventError,
+		EventResult,
+		EventCompacting,
+		EventUserMessage,
+		EventSystemMessage,
+	}
+
+	seen := make(map[SDKEventType]bool, len(allTypes))
+	for _, typ := range allTypes {
+		if typ == "" {
+			t.Errorf("event type constant should not be empty")
+		}
+		if seen[typ] {
+			t.Errorf("duplicate event type constant: %q", typ)
+		}
+		seen[typ] = true
+	}
+
+	if len(seen) != len(allTypes) {
+		t.Errorf("expected %d unique types, got %d", len(allTypes), len(seen))
+	}
+}
+
+func TestSDKEventNewTypeValues(t *testing.T) {
+	// Verify new event type string values match TS SDK names
+	tests := []struct {
+		got  SDKEventType
+		want string
+	}{
+		{EventResult, "result"},
+		{EventCompacting, "compacting"},
+		{EventUserMessage, "user_message"},
+		{EventSystemMessage, "system"},
+	}
+	for _, tt := range tests {
+		if string(tt.got) != tt.want {
+			t.Errorf("event type = %q, want %q", tt.got, tt.want)
+		}
+	}
+}
+
+func TestSDKEventExtendedFields(t *testing.T) {
+	// Verify the extended fields on SDKEvent are usable
+	evt := SDKEvent{
+		Type:       EventResult,
+		Result:     "full result text",
+		SessionID:  "sess-abc",
+		NumTurns:   5,
+		Status:     "",
+		StopReason: "end_turn",
+		Cost:       0.123,
+		IsError:    false,
+	}
+	if evt.Result != "full result text" {
+		t.Errorf("Result = %q, want %q", evt.Result, "full result text")
+	}
+	if evt.SessionID != "sess-abc" {
+		t.Errorf("SessionID = %q, want %q", evt.SessionID, "sess-abc")
+	}
+	if evt.NumTurns != 5 {
+		t.Errorf("NumTurns = %d, want %d", evt.NumTurns, 5)
+	}
+	if evt.StopReason != "end_turn" {
+		t.Errorf("StopReason = %q, want %q", evt.StopReason, "end_turn")
+	}
+}
