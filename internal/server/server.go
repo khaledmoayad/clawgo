@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -23,6 +25,14 @@ type Config struct {
 	Addr string
 	// AllowOrigins is the list of allowed WebSocket origin patterns.
 	AllowOrigins []string
+	// AuthToken is the bearer token required for API access. Empty means no auth.
+	AuthToken string
+	// IdleTimeoutMs is how long a detached session stays alive before stopping (milliseconds).
+	IdleTimeoutMs int
+	// MaxSessions is the maximum number of concurrent sessions. 0 means unlimited.
+	MaxSessions int
+	// Workspace is the default working directory for new sessions.
+	Workspace string
 }
 
 // Server is a direct-connect WebSocket server that IDE extensions connect to
@@ -64,6 +74,7 @@ func (s *Server) Start(ctx context.Context) (int, error) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", s.handleWS)
 	mux.HandleFunc("/health", s.handleHealth)
+	mux.HandleFunc("POST /sessions", s.handleCreateSession)
 
 	s.httpServer = &http.Server{
 		Handler:      mux,
@@ -96,8 +107,70 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
-// handleWS accepts a WebSocket connection, creates a session, and enters
-// a read loop to handle messages from the IDE extension.
+// handleCreateSession handles POST /sessions to create a new direct-connect session.
+// Returns a ConnectResponse with session_id, ws_url, and work_dir.
+func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
+	if !s.checkAuth(w, r) {
+		return
+	}
+
+	// Check max sessions limit
+	if s.config.MaxSessions > 0 && s.sessions.Count() >= s.config.MaxSessions {
+		http.Error(w, `{"error":"max sessions reached"}`, http.StatusServiceUnavailable)
+		return
+	}
+
+	var req CreateSessionRequest
+	if r.Body != nil {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
+			return
+		}
+	}
+
+	// Determine working directory: request cwd > config workspace > current dir
+	workDir := req.Cwd
+	if workDir == "" {
+		workDir = s.config.Workspace
+	}
+	if workDir == "" {
+		workDir, _ = os.Getwd()
+	}
+
+	// Generate session ID and create session info
+	sessionID := generateSessionID()
+	info := &SessionInfo{
+		ID:        sessionID,
+		Status:    StateStarting,
+		CreatedAt: time.Now().UnixMilli(),
+		WorkDir:   workDir,
+	}
+	s.sessions.AddSession(info)
+
+	// Transition to running
+	s.sessions.UpdateStatus(sessionID, StateRunning)
+
+	// Build WebSocket URL
+	s.mu.Lock()
+	port := s.port
+	s.mu.Unlock()
+	wsURL := fmt.Sprintf("ws://127.0.0.1:%d/ws?session=%s", port, sessionID)
+
+	resp := ConnectResponse{
+		SessionID: sessionID,
+		WsURL:     wsURL,
+		WorkDir:   workDir,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// handleWS accepts a WebSocket connection and enters a read loop to handle
+// messages from the IDE extension. If a session query parameter is provided,
+// the connection is associated with that existing session; otherwise a new
+// session is created on the fly.
 func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	opts := &websocket.AcceptOptions{}
 	if len(s.config.AllowOrigins) > 0 {
@@ -113,8 +186,19 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Generate session ID
-	sessionID := generateSessionID()
+	// Check if connecting to an existing session via query param
+	sessionID := r.URL.Query().Get("session")
+	if sessionID != "" {
+		// Validate the session exists
+		if info := s.sessions.GetSession(sessionID); info == nil {
+			conn.Close(websocket.StatusPolicyViolation, "unknown session")
+			return
+		}
+	} else {
+		// Generate a new ad-hoc session ID
+		sessionID = generateSessionID()
+	}
+
 	sess := &Session{
 		ID:        sessionID,
 		Conn:      conn,
@@ -147,6 +231,25 @@ func (s *Server) handleMessage(ctx context.Context, sess *Session, msg json.RawM
 	// TODO: Implement message dispatch based on message type
 	// For now, echo back the message
 	_ = wsjson.Write(ctx, sess.Conn, msg)
+}
+
+// checkAuth validates the Authorization bearer token if AuthToken is configured.
+// Returns true if auth passes (or no auth required), false if unauthorized.
+func (s *Server) checkAuth(w http.ResponseWriter, r *http.Request) bool {
+	if s.config.AuthToken == "" {
+		return true
+	}
+	auth := r.Header.Get("Authorization")
+	if !strings.HasPrefix(auth, "Bearer ") {
+		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+		return false
+	}
+	token := strings.TrimPrefix(auth, "Bearer ")
+	if token != s.config.AuthToken {
+		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+		return false
+	}
+	return true
 }
 
 // Stop gracefully shuts down the server, closing all sessions and the
