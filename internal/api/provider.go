@@ -55,6 +55,7 @@ type ProviderClientConfig struct {
 	BaseURL   string
 	Model     string
 	MaxTokens int64
+	Extra     []option.RequestOption // Additional SDK options (e.g., custom auth headers)
 }
 
 // NewProviderClient creates a Client using the active provider determined from
@@ -118,6 +119,9 @@ func NewProviderClient(ctx context.Context, cfg ProviderClientConfig) (*Client, 
 
 	httpClient := &http.Client{Transport: transport}
 	opts = append(opts, option.WithHTTPClient(httpClient))
+
+	// Append any extra options (custom auth headers, etc.)
+	opts = append(opts, cfg.Extra...)
 
 	sdk := anthropic.NewClient(opts...)
 

@@ -54,6 +54,10 @@ type StreamConfig struct {
 	Effort EffortLevel
 	// CacheControl enables ephemeral cache control on system blocks.
 	CacheControl bool
+	// IsOAuth indicates the client is using a Claude.ai OAuth token
+	// (Authorization: Bearer sk-ant-oat01-...). When true, the
+	// "oauth-2025-04-20" beta header is added so the API accepts Bearer auth.
+	IsOAuth bool
 }
 
 // StreamMessage sends a streaming API request and returns events on a channel.
@@ -77,6 +81,11 @@ func (c *Client) StreamMessageWithConfig(ctx context.Context, params anthropic.M
 		provider = ProviderFirstParty
 	}
 	betas := GetMessagesBetas(provider)
+	// Claude.ai OAuth subscribers require the oauth-2025-04-20 beta header so
+	// the API accepts Authorization: Bearer instead of X-Api-Key.
+	if cfg.IsOAuth {
+		betas = append(betas, BetaOAuth)
+	}
 	for _, beta := range betas {
 		opts = append(opts, option.WithHeaderAdd("anthropic-beta", beta))
 	}

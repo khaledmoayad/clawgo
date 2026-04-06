@@ -22,6 +22,13 @@ const (
 	BetaRedactThinking      = "redact-thinking-2026-02-12"
 	BetaTokenEfficientTools = "token-efficient-tools-2026-03-28"
 	BetaAdvisor             = "advisor-tool-2026-03-01"
+	// BetaOAuth enables Bearer token (OAuth) authentication on the Anthropic API.
+	// Claude Code sends this beta header for Claude.ai subscribers so that the
+	// API accepts "Authorization: Bearer <sk-ant-oat01-...>" instead of the
+	// usual "X-Api-Key" header. Without it the API responds with 401
+	// "OAuth authentication is currently not supported".
+	// Mirrors OAUTH_BETA_HEADER = 'oauth-2025-04-20' in constants/oauth.ts.
+	BetaOAuth = "oauth-2025-04-20"
 )
 
 // GetMessagesBetas returns the set of beta header strings to send on

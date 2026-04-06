@@ -213,9 +213,9 @@ func Run(ctx context.Context, params *RunParams, cfg *config.Config, settings *c
 		os.Setenv("CLAUDE_CODE_SIMPLE", "1")
 	}
 
-	// 1. Resolve API key
-	apiKey := config.ResolveAPIKey(cfg)
-	if apiKey == "" {
+	// 1. Resolve authentication
+	auth := config.ResolveAuth(cfg)
+	if auth.Token == "" {
 		return fmt.Errorf("no API key found. Set ANTHROPIC_API_KEY env var or add to ~/.claude/.credentials.json")
 	}
 
@@ -224,12 +224,18 @@ func Run(ctx context.Context, params *RunParams, cfg *config.Config, settings *c
 	if alt := config.Env(config.EnvAPIBaseURL); alt != "" {
 		baseURL = alt
 	}
-	// Create API client. OAuth tokens (sk-ant-oat*) are sent as API keys — the
-	// Anthropic SDK handles routing internally. For full OAuth with bearer auth,
-	// the base URL must point to the Claude.ai API (handled by provider config).
+	// Claude.ai OAuth tokens use Authorization: Bearer header; direct API keys use x-api-key
 	var client *api.Client
 	var err error
-	client, err = api.NewClient(apiKey, baseURL)
+	if auth.IsOAuth {
+		// Claude.ai OAuth: use the SDK's AuthToken path which sends Authorization: Bearer
+		client, err = api.NewProviderClient(ctx, api.ProviderClientConfig{
+			AuthToken: auth.Token,
+			BaseURL:   baseURL,
+		})
+	} else {
+		client, err = api.NewClient(auth.Token, baseURL)
+	}
 	if err != nil {
 		return fmt.Errorf("failed to create API client: %w", err)
 	}
@@ -409,6 +415,9 @@ func Run(ctx context.Context, params *RunParams, cfg *config.Config, settings *c
 	streamCfg := api.StreamConfig{
 		Provider:     api.GetProvider(),
 		CacheControl: true,
+		// Pass OAuth flag so the oauth-2025-04-20 beta header is included,
+		// which is required for the API to accept Authorization: Bearer tokens.
+		IsOAuth: auth.IsOAuth,
 	}
 
 	// --effort: set effort level on stream config

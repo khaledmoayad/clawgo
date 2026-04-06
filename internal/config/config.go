@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"os"
+	"strings"
 )
 
 // Config is a type alias for GlobalConfig for backward compatibility.
@@ -48,6 +49,26 @@ func SaveConfig(cfg *Config) error {
 		return err
 	}
 	return os.WriteFile(path, data, 0644)
+}
+
+// AuthResult holds the resolved authentication credentials.
+type AuthResult struct {
+	Token   string // The API key or OAuth access token
+	IsOAuth bool   // True if this is a Claude.ai OAuth token (use as authToken, not apiKey)
+}
+
+// ResolveAuth resolves authentication from multiple sources in priority order.
+// Returns an AuthResult indicating whether the token is an API key or OAuth token.
+func ResolveAuth(cfg *Config) AuthResult {
+	result := ResolveAPIKey(cfg)
+	if result == "" {
+		return AuthResult{}
+	}
+	// OAuth tokens from Claude.ai start with "sk-ant-oat"
+	return AuthResult{
+		Token:   result,
+		IsOAuth: strings.HasPrefix(result, "sk-ant-oat"),
+	}
 }
 
 // ResolveAPIKey resolves the API key from multiple sources in priority order:
